@@ -1,0 +1,722 @@
+import ast
+import re
+import os
+import json
+from client import LLMFactory
+import re
+class BaseCollector():
+    def __init__(self, project_path, project_name, src_path) -> None:
+        self.project_path = project_path
+        self.project_name = project_name
+        self.src_path = src_path
+        self.file_cache = {}
+        self.language = "python"
+        self.init_llm_client()
+        self.testsuites_cache = {}
+    
+    def init_llm_client(self):
+        api_key = os.getenv('OPENAI_API_KEY', 'sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b')
+        self.client = LLMFactory.create_client(
+            'gpt',
+            api_key=api_key,
+            base_url="https://api2.mygptlife.com/v1"
+        )
+
+    def _find_related_testsuite(self, current_methods, all_caller_graph):
+        if not current_methods:
+            return set()
+        if isinstance(current_methods, tuple):
+            current_methods = [current_methods]
+        elif not isinstance(current_methods, list):
+            current_methods = [current_methods]
+
+        ret = set()
+        for method in current_methods:
+            if not method:
+                continue
+            ret.update(self._collect_testsuites(method, all_caller_graph, set()))
+        return ret
+
+    def _collect_testsuites(self, method, all_caller_graph, visiting):
+        cached = self.testsuites_cache.get(method)
+        if cached is not None:
+            return set(cached)
+        if method in visiting:
+            return set()
+
+        visiting.add(method)
+        suites = set()
+        for caller, is_test in all_caller_graph.get(method, []):
+            if is_test:
+                suites.add(caller)
+            else:
+                suites.update(self._collect_testsuites(caller, all_caller_graph, visiting))
+        visiting.remove(method)
+
+        if suites:
+            self.testsuites_cache[method] = frozenset(suites)
+        return suites
+
+    def _read_file(self, file_path: str) -> tuple:
+        if file_path in self.file_cache:
+            return self.file_cache[file_path]
+        with open(file_path, 'r', encoding='utf-8') as f:
+            file_contents = f.read()
+        file_tree = ast.parse(file_contents)
+        self.file_cache[file_path] = (file_contents, file_tree)
+        return file_contents, file_tree
+
+
+    def _is_project_module(self, module_path: str) -> bool:
+        """判断是否是项目内部模块"""
+        project_prefix = f"{self.project_name}.{self.src_path}".replace("/", ".").replace(os.sep, ".")
+        return module_path.startswith(project_prefix)
+    def _get_module_info(self, module_path: str, current_file: str, level: int = 0) -> tuple:
+        """
+        解析模块路径，返回 (source, absolute_path)
+        Args:
+            module_path: 模块路径（可能是相对路径）
+            current_file: 当前文件的路径
+            level: 相对导入的层级（点的数量）
+        Returns:
+            (来源类型, 绝对路径)
+        """
+        if level == 0 and not module_path.startswith('.'):
+            return 'third_party', module_path
+        else:
+            # 相对导入
+            current_dir = os.path.dirname(current_file)
+            # 根据点的数量往上进目录
+            for _ in range(level - 1):
+                current_dir = os.path.dirname(current_dir)
+            
+            if module_path.startswith('.'):
+                module_path = module_path[1:]
+            
+            if module_path:
+                abs_path = os.path.join(current_dir, module_path.replace(".", os.sep) + ".py")
+            else:
+                abs_path = current_dir + ".py"
+            
+            # 检查是否在项目路径内
+            if abs_path.startswith(self.project_path):
+                return 'project', abs_path
+            else:
+                return 'third_party', module_path
+
+    def _get_imports(self, file_path: str) -> dict:
+        """
+        获取文件中的所有导入语句和定义的符号
+        返回一个字典，其中键是别名或原始名称，值是一个字典包含以下信息：
+        - source: 来源（'third_party', 'project' 或 'local')
+        - path: 如果是项目内部包，则是绝对路径，否则是原始导入路径
+        - method: 导入或定义的内容（方法、类名或常量）
+
+        例如：
+        import numpy as np -> {'np': {'source': 'third_party', 'path': 'numpy', 'method': None}}
+        class MyClass -> {'MyClass': {'source': 'local', 'path': '/current/file.py', 'method': 'MyClass'}}
+        def my_func -> {'my_func': {'source': 'local', 'path': '/current/file.py', 'method': 'my_func'}}
+        """
+        imports = {}
+        try:
+            file_contents, tree = self._read_file(file_path)
+            
+            # 先收集文件中的所有一级定义
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.ClassDef):
+                    imports[node.name] = {
+                        'source': 'local',
+                        'path': file_path,
+                        'method': node.name,
+                    }
+                elif isinstance(node, ast.FunctionDef):
+                    imports[node.name] = {
+                        'source': 'local',
+                        'path': file_path,
+                        'method': node.name,
+                    }
+                elif isinstance(node, ast.Assign):
+                    # 只处理一级变量定义
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            imports[target.id] = {
+                                'source': 'local',
+                                'path': file_path,
+                                'method': target.id,
+                            }
+            
+            # 然后处理导入语句
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for name in node.names:
+                        module_path = name.name
+                        key = name.asname if name.asname else module_path.split(".")[-1]
+                        source, path = self._get_module_info(module_path, file_path)
+                        imports[key] = {
+                            'source': source,
+                            'path': path,
+                            'method': None,
+                        }
+                
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module if node.module else ''
+                    source, path = self._get_module_info(module, file_path, node.level)
+                    
+                    for name in node.names:
+                        if name.name == '*':
+                            imports[f'{module}.*'] = {
+                                'source': source,
+                                'path': path,
+                                'method': '*',
+                            }
+                        else:
+                            key = name.asname if name.asname else name.name.split(".")[-1]
+                            imports[key] = {
+                                'source': source,
+                                'path': path,
+                                'method': name.name,
+                            }
+        except Exception as e:
+            print(f"Error analyzing imports in {file_path}: {e}")
+        return imports
+
+    def _analyze_callee_imports(self, callee_source: str) -> set:
+        """分析被调用方法中使用的包和方法"""
+        used_imports = set()
+        try:
+            tree = ast.parse(callee_source.strip())
+            
+            # 收集所有使用的名称
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    used_imports.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    # 处理形如 module.function 的调用
+                    parts = []
+                    current = node
+                    while isinstance(current, ast.Attribute):
+                        parts.append(current.attr)
+                        current = current.value
+                    if isinstance(current, ast.Name):
+                        parts.append(current.id)
+                        used_imports.add('.'.join(reversed(parts)))
+        except Exception as e:
+            print(f"Error analyzing callee imports: {e}")
+        return used_imports
+    
+    def _convert_imports_to_statements(self, imports, caller_file):
+        """
+        @param imports: [(import_name, {source: source, path: path, method: method})]
+        @return statements: list(str), lineno
+        将导入的包和方法转换为import语句
+        并返回对应的语句
+        """
+        # 按照文件路径和引用分组导入
+        imports_by_path = {}
+        for imp in imports:
+            alias, info = imp
+            path_key = info['path']
+            
+            if info['source'] in ['local', 'project']:
+                # 如果是本地定义，需要计算相对路径
+                caller_dir = os.path.dirname(caller_file)
+                callee_path = info['path']
+                
+                # 计算共同路径
+                common_prefix = os.path.commonpath([caller_dir, callee_path])
+                
+                # 计算需要往上走多少层
+                rel_caller = os.path.relpath(caller_dir, common_prefix)
+                if rel_caller == ".":
+                    # callee在caller的子目录中
+                    dots = '.'
+                else:
+                    # 计算caller到common_prefix的层级数
+                    dots = '.' * (len(rel_caller.split(os.sep)) + 1)
+                
+                # 计算callee相对于common_prefix的路径
+                rel_callee = os.path.relpath(callee_path, common_prefix)
+                # 移除.py后缀并转换为点分隔形式
+                module_path = os.path.splitext(rel_callee)[0].replace(os.sep, '.')
+                path_key = f"{dots}{module_path}"
+            
+            if path_key not in imports_by_path:
+                imports_by_path[path_key] = []
+            imports_by_path[path_key].append((alias, info))
+        
+        # 生成import语句
+        import_statements = []
+        for path_key, imports_group in imports_by_path.items():
+            # 生成导入语句
+            methods = set()
+            for alias, info in imports_group:
+                if info['method'] is None:
+                    import_statements.append(f"import {path_key}")
+                elif info['method'] == alias:
+                    methods.add(f"{alias}")
+                else:
+                    methods.add(f"{info['method']} as {alias}")
+            if len(methods) > 0:
+                import_statements.append(f"from {path_key} import {', '.join(methods)}")
+        return import_statements
+
+    def _get_last_import_line(self, caller_file):
+        """
+        此方法要拿到caller_file下的最后一个import语句的行号
+        @param caller_file: str, 文件路径
+        @return: int, 最后一个import语句的行号，如果没有import语句则返回0
+        """
+        caller_content, caller_tree = self._read_file(caller_file)
+        caller_lines = caller_content.splitlines()
+        # 遍历AST找到所有import语句
+        last_import_line = 0
+        lines_without_import = 0
+        
+        for lineno, line in enumerate(caller_lines):
+            if line.startswith("import") or line.strip().startswith("from"):
+                last_import_line = lineno
+                lines_without_import = 0
+            elif line and not line.startswith('#'):
+                # 只计算非空且非注释行
+                lines_without_import += 1
+                if lines_without_import > 5:
+                    break
+        
+        return last_import_line
+
+    def _get_imports_from_callee(self, caller, callee) -> list:
+        # 1. 分析导入依赖
+        caller_imports = self._get_imports(caller['file'])
+        callee_imports = self._get_imports(callee['file'])
+        callee_used_imports = self._analyze_callee_imports(callee['source'])
+        
+        # 找出需要添加的导入
+        needed_imports = []
+        
+        for imp in callee_used_imports:
+            # 检查是否在callee文件中定义或导入
+            if not any(imp.startswith(ci) for ci in caller_imports.keys()):
+                if imp in callee_imports:
+                    info = callee_imports[imp]
+                    needed_imports.append((imp, info))
+        
+        return needed_imports
+
+    def replace_caller_from_callee(self, caller, callee):
+        ret = self._replace_caller_from_callee_gpt(caller, callee)
+        return ret
+
+    def _replace_caller_from_callee_gpt(self, caller, callee):
+        ## 处理Import的问题
+        imports = self._get_imports_from_callee(caller, callee)
+         # 找到调用点
+        start_line = caller['line_number'] - 1  # 转为0-based索引
+        end_line = caller['end_line_number']
+        
+        # 分析调用者的文件
+        caller_file = caller['file']
+
+        caller_content, caller_tree = self._read_file(caller_file)
+        
+        caller_lines = caller_content.splitlines()
+        original_call = caller_lines[start_line:end_line]
+        
+        # 分析调用语句，获取实际参数
+        # 将多行调用合并成一行
+        call_line = "\n".join(original_call).strip()
+        # 解析整个表达式
+        try:
+            expr_ast = ast.parse(call_line)
+        except Exception as e:
+            print(f"Error parsing call: {e}")
+            return None
+        ## 如果是元组，说明是不合法的调用，需要特殊处理
+        if isinstance(expr_ast.body[0], ast.Expr) and isinstance(expr_ast.body[0].value, ast.Tuple):
+            return None
+        
+        # 分析调用语句，获取实际参数
+        # 将多行调用合并成一行
+        call_line = "\n".join(original_call).strip()
+        decorators = "\n".join("@"+d for d in callee.get("decorators", []))
+        
+        prompt = """You are an expert in Python programming. You are expected to replace the caller statement with the callee source code.
+Then output the replacement code in caller function. Note we only need the replacement code, not the whole caller function.
+You are supposed to obey the following rules:
+1. local variables in callee function should be carefully checked and replaced in caller function. if found conflicts with caller function, you should rename the variable in callee function.
+2. return statements must be removed in callee function, if have multipe return statements, you should use IF ELSE to rearrange the callee function. Further, if have return value, you should carefully check and replace the return value in caller function.
+3. ensure the replacement code is valid and can be compiled.
+4. Think step by step and finally response the final revised code in ```python ```.
+
+## Input
+Caller Function:
+```python
+{caller}
+```
+Caller Line:
+```python
+{call_line}
+```
+Callee:
+```python
+{decorators}
+{callee}
+```
+## Response
+""".format(
+    caller=caller['source'],
+    call_line=call_line,
+    decorators=decorators,
+    callee=callee['source']
+)
+        # 调用GPT获取替换信息
+        response = self.client.chat(
+            prompt=prompt,
+            model="gpt-4o-mini",
+            max_tokens=4096,
+            temperature=0.7
+        )
+        
+        content = response
+        # 提取被```python```包裹的代码
+        match = re.search(r'```python\s*([\s\S]*?)```', content)
+        if match:
+            python_code = match.group(1)
+        else:
+            return None
+        python_code_lines = python_code.splitlines()
+
+        start_indent = len(python_code_lines[0]) - len(python_code_lines[0].lstrip())
+        
+        indent = len(original_call[0]) - len(original_call[0].lstrip())
+        indented_body = '\n'.join([' ' * (indent + len(line) - len(line.lstrip()) - start_indent) + line for line in python_code_lines])
+        # 收集caller中的替换信息
+        return {
+            'start': start_line,
+            'end': end_line,
+            'replacement': indented_body.splitlines(),
+            'imports': imports
+        }
+
+    def _replace_caller_from_callee(self, caller, callee):
+        """
+        caller:调用者，{"file": caller_file, "caller_method": caller_method, "line_number": line_number, "col_offset": col_offset, "end_line_number": end_line_number}
+        callee:被调用者, {"source": source, "file": file, "position": {"module_path": module, "class_name": class_name, "method_name": method_name}}
+        本方法要完成的功能是：
+        将callee的方法体插入到caller对应的调用位置上，
+        处理变量冲突和包导入问题。
+        """
+
+        
+        ## 处理Import的问题
+        imports = self._get_imports_from_callee(caller, callee)
+
+        ### deal callee
+        # 获取方法的AST
+        method_ast = ast.parse(callee.get('source', '').strip()).body[0]
+        decorators = callee.get("decorators")
+        # 检查方法类型
+        is_staticmethod = False
+        is_classmethod = False
+        if 'staticmethod' in decorators:
+            is_staticmethod = True
+        if 'classmethod' in decorators:
+            is_classmethod = True
+        
+        # 获取方法的参数信息
+        args_info = {
+            'args': [],  # 位置参数
+            'defaults': [],  # 默认值
+            'kwonly_args': [],  # 仅关键字参数
+            'is_staticmethod': is_staticmethod,
+            'is_classmethod': is_classmethod,
+            'kwonly_defaults': [],  # 仅关键字参数的默认值
+            'varargs': None,  # *args参数名
+            'varkw': None  # **kwargs参数名
+        }
+        
+        # 获取位置参数
+        for arg in method_ast.args.args:
+            if arg.arg != 'self':
+                args_info['args'].append(arg.arg)
+        
+        # 获取*args参数
+        if method_ast.args.vararg:
+            args_info['varargs'] = method_ast.args.vararg.arg
+        
+        # 获取**kwargs参数
+        if method_ast.args.kwarg:
+            args_info['varkw'] = method_ast.args.kwarg.arg
+        
+        # 获取默认值
+        defaults = [ast.unparse(default) if default else 'None' for default in (method_ast.args.defaults or [])]
+        args_info['defaults'] = ['None'] * (len(args_info['args']) - len(defaults)) + defaults
+        
+        # 获取仅关键字参数
+        args_info['kwonly_args'] = [arg.arg for arg in method_ast.args.kwonlyargs]
+        args_info['kwonly_defaults'] = [ast.unparse(default) if default else 'None' 
+                                    for default in (method_ast.args.kw_defaults or [])]
+        
+        # 分析方法体中的局部变量
+        local_vars = set()
+        for node in ast.walk(ast.parse(ast.unparse(method_ast.body))):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                local_vars.add(node.id)
+        
+        print(f"\nMethod information:")
+        print(f"Position arguments: {list(zip(args_info['args'], args_info['defaults']))}")
+        print(f"Keyword-only arguments: {list(zip(args_info['kwonly_args'], args_info['kwonly_defaults']))}")
+        if args_info['varargs']:
+            print(f"Varargs (*{args_info['varargs']})")
+        if args_info['varkw']:
+            print(f"Varkw (**{args_info['varkw']})")
+        print(f"Local variables: {local_vars}")
+        
+        # 移除装饰器、函数定义行和docstring，只保留函数体
+        body_without_docstring = [node for node in method_ast.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Str)]
+        callee_method_body = ast.unparse(body_without_docstring)
+        
+        # 分析调用者的文件
+        caller_file = caller['file']
+
+        caller_content, caller_tree = self._read_file(caller_file)
+        
+        caller_lines = caller_content.splitlines()
+
+
+        print(f"\n---")
+        print(f"In method: {caller['caller_method']}")
+        print(f"At line {caller['line_number']}, column {caller['col_offset']}")
+        # 分析caller方法中的局部变量
+        caller_locals = set()
+                
+        # 找到调用者的方法
+        for node in ast.walk(caller_tree):
+            # 只收集在当前行之前的变量
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                caller_locals.add(node.id)
+            if not isinstance(node, ast.FunctionDef) or node.name != caller['caller_method']:
+                continue
+            
+            # 找到调用点
+            start_line = caller['line_number'] - 1  # 转为0-based索引
+            end_line = caller['end_line_number']
+            
+            original_call = caller_lines[start_line:end_line]
+        
+            # 分析调用语句，获取实际参数
+            # 将多行调用合并成一行
+            call_line = "\n".join(original_call).strip()
+            # 解析整个表达式
+            try:
+                expr_ast = ast.parse(call_line)
+                
+            except Exception as e:
+                print(f"Error parsing call: {e}")
+                return None
+            first_node = expr_ast.body[0]
+            ## 如果是元组，说明是不合法的调用，需要特殊处理
+            if isinstance(first_node, ast.Expr) and isinstance(first_node.value, ast.Tuple):
+                return None
+            # 检查是否是赋值语句
+            if isinstance(first_node, ast.Assign):
+                if len(first_node.targets) > 1:
+                    continue
+                    
+                target = first_node.targets[0]
+                # 获取赋值语句左侧的变量名
+                if isinstance(target, ast.Name):
+                    # 简单变量赋值，如 x = func()
+                    return_var = target.id
+                else:
+                    # 属性赋值，如 self.x = func()
+                    return_var = ast.unparse(target)
+                call_ast = first_node.value
+            else:
+                return_var = None
+                call_ast = first_node.value if isinstance(first_node, ast.Expr) else None
+                
+            if not isinstance(call_ast, ast.Call):
+                # 该调用可能只是某些方法的入参，或者计算表达式的一部分，因此无需考虑
+                continue
+            
+            # 获取位置参数
+            actual_args = [ast.unparse(arg) for arg in call_ast.args]
+            # 获取关键字参数
+            actual_kwargs = {kw.arg: ast.unparse(kw.value) for kw in call_ast.keywords}
+            
+            print(f"\nCall arguments:")
+            print(f"Position args: {actual_args}")
+            print(f"Keyword args: {actual_kwargs}")
+            
+            # 创建参数映射
+            arg_mapping = {}
+            
+            # 处理位置参数
+            min_args = len(args_info['args']) - len(args_info['defaults'])
+            
+            # 检查是否提供了足够的位置参数
+            if len(actual_args) < min_args and not args_info['varargs']:
+                raise ValueError(f"Not enough positional arguments. Expected at least {min_args}, got {len(actual_args)}")
+            
+            # 处理普通位置参数
+            for i, arg_name in enumerate(args_info['args']):
+                # 如果是第一个参数，需要特殊处理
+                if i == 0:
+                    if args_info['is_staticmethod']:
+                        # 静态方法不需要特殊处理第一个参数
+                        if i < len(actual_args):
+                            arg_mapping[arg_name] = actual_args[i]
+                        elif arg_name in actual_kwargs:
+                            arg_mapping[arg_name] = actual_kwargs[arg_name]
+                        else:
+                            arg_mapping[arg_name] = args_info['defaults'][i - (len(args_info['args']) - len(args_info['defaults']))]
+                    elif args_info['is_classmethod']:
+                        # 类方法的第一个参数是cls
+                        if isinstance(call_ast.func, ast.Attribute):
+                            # 如果是类方法调用 (如 ClassName.method())
+                            class_name = ast.unparse(call_ast.func.value)
+                            arg_mapping[arg_name] = class_name
+                        elif i < len(actual_args):
+                            # 如果通过位置参数传入了cls
+                            arg_mapping[arg_name] = actual_args[i]
+                        else:
+                            # 如果通过关键字参数传入了cls
+                            arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
+                    else:
+                        # 普通实例方法，第一个参数是self
+                        if i < len(actual_args):
+                            arg_mapping[arg_name] = actual_args[i]
+                        elif arg_name in actual_kwargs:
+                            arg_mapping[arg_name] = actual_kwargs[arg_name]
+                        else:
+                            arg_mapping[arg_name] = 'self'
+                else:
+                    # 处理其他参数，需要考虑参数偏移
+                    # 对于实例方法和类方法，实际参数索引需要-1，因为第一个参数(self/cls)已经被特殊处理
+                    arg_index = i
+                    if not args_info['is_staticmethod']:
+                        arg_index = i - 1
+                    
+                    if arg_index < len(actual_args):
+                        arg_mapping[arg_name] = actual_args[arg_index]
+                    elif arg_name in actual_kwargs:
+                        arg_mapping[arg_name] = actual_kwargs[arg_name]
+                    else:
+                        arg_mapping[arg_name] = args_info['defaults'][i - (len(args_info['args']) - len(args_info['defaults']))]
+            
+            # 处理*args参数
+            if args_info['varargs']:
+                varargs_list = actual_args[len(args_info['args']):]
+                if varargs_list:
+                    arg_mapping[args_info['varargs']] = f"[{', '.join(varargs_list)}]"
+                else:
+                    arg_mapping[args_info['varargs']] = '[]'
+            
+            # 处理仅关键字参数
+            for i, arg_name in enumerate(args_info['kwonly_args']):
+                if arg_name in actual_kwargs:
+                    arg_mapping[arg_name] = actual_kwargs[arg_name]
+                else:
+                    arg_mapping[arg_name] = args_info['kwonly_defaults'][i]
+            
+            # 处理**kwargs参数
+            if args_info['varkw']:
+                used_kwargs = set(args_info['args']).union(args_info['kwonly_args'])
+                remaining_kwargs = {k: v for k, v in actual_kwargs.items() if k not in used_kwargs}
+                if remaining_kwargs:
+                    kwargs_items = [f"{k}: {v}" for k, v in remaining_kwargs.items()]
+                    arg_mapping[args_info['varkw']] = f"{{{', '.join(kwargs_items)}}}"
+                else:
+                    arg_mapping[args_info['varkw']] = '{}'
+
+            
+            print(f"Argument mapping: {arg_mapping}")
+            
+            # 修改方法体中的变量名
+            modified_body = callee_method_body
+            
+            # 收集所有入参信息
+            all_params = set(args_info['args'] + args_info['kwonly_args'])
+            if args_info['varargs']:
+                all_params.add(args_info['varargs'])
+            if args_info['varkw']:
+                all_params.add(args_info['varkw'])
+            
+            # 1. 先处理入参的重命名
+            param_name_mapping = {}
+            other_param_mapping = {}
+            
+            # 处理位置参数和关键字参数
+            for arg_name, arg_value in arg_mapping.items():
+                # 如果实参是一个变量名，而不是常量或表达式
+                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg_value) and not arg_value.startswith('_'):
+                    param_name_mapping[arg_name] = arg_value
+                else:
+                    ## self这种替换要在常量替换之后进行
+                    other_param_mapping[arg_name] = arg_value
+            
+            
+            # 只重命名不是入参的局部变量
+            local_only_vars = local_vars - all_params
+            
+            # 找出与caller中局部变量冲突的变量
+            conflicting_vars = local_only_vars.intersection(caller_locals)
+            
+            # 处理局部变量
+            for var in local_only_vars:
+                if var in conflicting_vars:
+                    # 只有发生冲突时才重命名
+                    prefix = '_'
+                    while prefix + var in conflicting_vars:
+                        prefix += '_'
+                    
+                    modified_body = re.sub(
+                        r'\b' + var + r'\b',
+                        f'{prefix}{var}',
+                        modified_body
+                    )
+            
+            # 3. 最后处理入参的变量名替换
+            for old_name, new_name in param_name_mapping.items():
+                modified_body = re.sub(r'\b' + old_name + r'\b', new_name, modified_body)
+            
+            for old_name, new_name in other_param_mapping.items():
+                modified_body = re.sub(r'\b' + old_name + r'\b', new_name, modified_body)
+            # 处理return语句
+            if return_var:
+                # 将return语句替换为赋值语句
+                modified_body = re.sub(
+                    r'\breturn\s+([^\n;]+)',
+                    f'{return_var} = \\1',
+                    modified_body
+                )
+            else:
+                modified_body = re.sub(
+                    r'\breturn\s+([^\n;]+)',
+                    f'return \\1',
+                    modified_body
+                )
+            
+            # 缩进内联的代码
+            indent = len(original_call[0]) - len(original_call[0].lstrip())
+            indented_body = '\n'.join([' ' * indent + line for line in modified_body.splitlines()])
+            
+            print(f"\nReplaced with:")
+            print(indented_body)
+            
+            # 收集caller中的替换信息
+            return {
+                'start': start_line,
+                'end': end_line,
+                'replacement': indented_body.splitlines(),
+                'imports': imports
+            }
+    def collect(self, class_methods, all_calls, all_definitions, all_caller_graph):
+        """
+        @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
+        @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
+        @param all_definitions: {(called_module, called_class, called_method_name): definition}
+        
+        @return: List of methods [{"type": xxx , "called": (module_path, class_name, method_name), "caller": call_locations}]
+        """
+        raise Exception("Not implemented")
