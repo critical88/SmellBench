@@ -1,9 +1,8 @@
 import ast
-import re
-import os
 import json
-from client import LLMFactory
+import os
 import re
+from client import LLMFactory
 class BaseCollector():
     def __init__(self, project_path, project_name, src_path) -> None:
         self.project_path = project_path
@@ -14,6 +13,286 @@ class BaseCollector():
         self.init_llm_client()
         self.testsuites_cache = {}
     
+    def _safe_replace_identifier(self, source: str, old_name: str, replacement: str) -> str:
+        if not old_name:
+            return source
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            pattern = r'\b' + re.escape(old_name) + r'\b'
+            return re.sub(pattern, replacement, source)
+
+        parents = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+
+        spans = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id == old_name:
+                parent = parents.get(node)
+                if isinstance(parent, ast.Attribute) and parent.attr == old_name and parent.value is not node:
+                    continue
+                start_line = getattr(node, 'lineno', None)
+                start_col = getattr(node, 'col_offset', None)
+                end_line = getattr(node, 'end_lineno', None)
+                end_col = getattr(node, 'end_col_offset', None)
+                if start_line is None or start_col is None:
+                    continue
+                if end_line is None or end_col is None:
+                    end_line = start_line
+                    end_col = start_col + len(old_name)
+                spans.append(((start_line, start_col), (end_line, end_col)))
+
+        if not spans:
+            return source
+
+        lines = source.splitlines(keepends=True)
+        line_offsets = [0]
+        for line in lines:
+            line_offsets.append(line_offsets[-1] + len(line))
+
+        def to_offset(pos):
+            line, col = pos
+            return line_offsets[line - 1] + col
+
+        replacements = []
+        for start, end in sorted(spans, key=lambda p: (p[0][0], p[0][1])):
+            replacements.append((to_offset(start), to_offset(end)))
+
+        if not replacements:
+            return source
+
+        result_parts = []
+        last_index = 0
+        for start, end in replacements:
+            result_parts.append(source[last_index:start])
+            result_parts.append(replacement)
+            last_index = end
+        result_parts.append(source[last_index:])
+        return ''.join(result_parts)
+
+    def _generate_unique_name(self, base_name: str, existing_names) -> str:
+        candidate = base_name
+        counter = 0
+        while candidate in existing_names:
+            counter += 1
+            candidate = f"{base_name}_{counter}"
+        existing_names.add(candidate)
+        return candidate
+
+    def _fallback_return_rewrite(self, body_source: str, return_var: str | None) -> str:
+        pattern = r'\breturn\s+([^\n;]+)'
+        if return_var:
+            return re.sub(pattern, f'{return_var} = \\1', body_source)
+        return body_source
+
+    def _build_return_nodes(self, node: ast.Return, flag_names: list[str] | None, return_var: str | None):
+        new_nodes = []
+        if return_var:
+            if node.value:
+                value_code = ast.unparse(node.value)
+                assign_code = f"{return_var} = {value_code}"
+            else:
+                assign_code = f"{return_var} = None"
+            new_nodes.append(ast.parse(assign_code).body[0])
+        else:
+            new_nodes.append(ast.Pass())
+
+        if flag_names:
+            for flag_name in flag_names:
+                flag_assign = ast.Assign(
+                    targets=[ast.Name(id=flag_name, ctx=ast.Store())],
+                    value=ast.Constant(value=True)
+                )
+                new_nodes.append(flag_assign)
+        return new_nodes
+
+    def _stmt_contains_return(self, stmt):
+        if isinstance(stmt, ast.Return):
+            return True
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return False
+        if isinstance(stmt, ast.If):
+            return any(self._stmt_contains_return(s) for s in stmt.body + stmt.orelse)
+        if isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+            return any(self._stmt_contains_return(s) for s in stmt.body + stmt.orelse)
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            return any(self._stmt_contains_return(s) for s in stmt.body)
+        if isinstance(stmt, ast.Try):
+            if any(self._stmt_contains_return(s) for s in stmt.body + stmt.finalbody + stmt.orelse):
+                return True
+            for handler in stmt.handlers:
+                if any(self._stmt_contains_return(s) for s in handler.body):
+                    return True
+            return False
+        if hasattr(ast, "Match") and isinstance(stmt, ast.Match):
+            return any(self._stmt_contains_return(s) for case in stmt.cases for s in case.body)
+        return False
+
+    def _block_contains_return(self, statements):
+        for stmt in statements:
+            if self._stmt_contains_return(stmt):
+                return True
+        return False
+
+    def _block_has_direct_return(self, statements):
+        for stmt in statements:
+            if isinstance(stmt, ast.Return):
+                return True
+        return False
+
+    def _process_statement(self, stmt, return_var: str | None, existing_names, loop_flag=None, extra_flags=None):
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return [stmt], None
+        if isinstance(stmt, ast.Return):
+            flag_names = []
+            if loop_flag:
+                flag_names.append(loop_flag)
+            if extra_flags:
+                flag_names.extend(extra_flags)
+            nodes = self._build_return_nodes(stmt, flag_names if flag_names else None, return_var)
+            info = {'has_return': True, 'type': 'return'}
+            if loop_flag:
+                nodes.append(ast.Break())
+                info['loop_flag'] = loop_flag
+            return nodes, info
+        if isinstance(stmt, ast.If):
+            contains_return = self._stmt_contains_return(stmt)
+            body_has_direct_return = self._block_has_direct_return(stmt.body)
+            needs_if_flag = contains_return and not body_has_direct_return
+            flag_assign = None
+            flag_name = None
+            body_flags = extra_flags
+            if needs_if_flag:
+                flag_name = self._generate_unique_name("__inline_if_flag", existing_names)
+                existing_names.add(flag_name)
+                flag_assign = ast.Assign(
+                    targets=[ast.Name(id=flag_name, ctx=ast.Store())],
+                    value=ast.Constant(value=False)
+                )
+                if extra_flags:
+                    body_flags = extra_flags + [flag_name]
+                else:
+                    body_flags = [flag_name]
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, body_flags)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, body_flags if needs_if_flag else extra_flags)
+            has_return = (body_info and body_info.get('has_return')) or (orelse_info and orelse_info.get('has_return'))
+            info = None
+            if has_return:
+                info = {'has_return': True, 'type': 'if', 'node': stmt}
+                if needs_if_flag:
+                    info['uses_flag'] = True
+                    info['flag_name'] = flag_name
+            statements = [stmt]
+            if flag_assign:
+                statements = [flag_assign, stmt]
+            return statements, info
+        if isinstance(stmt, (ast.For, ast.AsyncFor, ast.While)):
+            needs_flag = self._block_contains_return(stmt.body + stmt.orelse)
+            loop_flag_name = loop_flag if needs_flag else None
+            flag_assign = None
+            if needs_flag and loop_flag_name is None:
+                loop_flag_name = self._generate_unique_name("__inline_loop_flag", existing_names)
+                existing_names.add(loop_flag_name)
+                flag_assign = ast.Assign(
+                    targets=[ast.Name(id=loop_flag_name, ctx=ast.Store())],
+                    value=ast.Constant(value=False)
+                )
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag_name, extra_flags)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag_name, extra_flags)
+            has_return = (body_info and body_info.get('has_return')) or (orelse_info and orelse_info.get('has_return'))
+            if needs_flag and loop_flag_name:
+                stmt.body.append(
+                    ast.If(
+                        test=ast.Name(id=loop_flag_name, ctx=ast.Load()),
+                        body=[ast.Break()],
+                        orelse=[]
+                    )
+                )
+            info = {'has_return': True, 'type': 'loop'} if has_return else None
+            statements = [stmt]
+            if flag_assign:
+                statements = [flag_assign, stmt]
+            return statements, info
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags)
+            has_return = body_info and body_info.get('has_return')
+            info = {'has_return': True} if has_return else None
+            return [stmt], info
+        if isinstance(stmt, ast.Try):
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags)
+            stmt.finalbody, final_info = self._process_block_with_returns(stmt.finalbody, return_var, existing_names, loop_flag, extra_flags)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, extra_flags)
+            handler_return = False
+            for handler in stmt.handlers:
+                handler.body, handler_info = self._process_block_with_returns(handler.body, return_var, existing_names, loop_flag, extra_flags)
+                if handler_info and handler_info.get('has_return'):
+                    handler_return = True
+            has_return = (body_info and body_info.get('has_return')) or \
+                         (final_info and final_info.get('has_return')) or \
+                         (orelse_info and orelse_info.get('has_return')) or handler_return
+            info = {'has_return': True, 'type': 'try'} if has_return else None
+            return [stmt], info
+        if hasattr(ast, "Match") and isinstance(stmt, ast.Match):
+            case_return = False
+            for case in stmt.cases:
+                case.body, case_info = self._process_block_with_returns(case.body, return_var, existing_names, loop_flag, extra_flags)
+                if case_info and case_info.get('has_return'):
+                    case_return = True
+            info = {'has_return': True, 'type': 'match'} if case_return else None
+            return [stmt], info
+        return [stmt], None
+
+    def _process_block_with_returns(self, statements, return_var: str | None, existing_names, loop_flag=None, extra_flags=None):
+        new_statements = []
+        idx = 0
+        while idx < len(statements):
+            stmt = statements[idx]
+            transformed, info = self._process_statement(stmt, return_var, existing_names, loop_flag, extra_flags)
+            new_statements.extend(transformed)
+            if info and info.get('has_return'):
+                remaining, _ = self._process_block_with_returns(
+                    statements[idx + 1:], return_var, existing_names, loop_flag, extra_flags
+                )
+                if info.get('type') == 'if':
+                    if info.get('uses_flag'):
+                        flag_name = info.get('flag_name')
+                        if remaining:
+                            guard_if = ast.If(
+                                test=ast.UnaryOp(
+                                    op=ast.Not(),
+                                    operand=ast.Name(id=flag_name, ctx=ast.Load())
+                                ),
+                                body=remaining,
+                                orelse=[]
+                            )
+                            new_statements.append(guard_if)
+                    else:
+                        if remaining:
+                            info['node'].orelse.extend(remaining)
+                    return new_statements, {'has_return': True}
+                else:
+                    return new_statements, {'has_return': True}
+            idx += 1
+        return new_statements, None
+
+    def _rewrite_returns_with_flag(self, body_source: str, return_var: str | None, existing_names) -> str:
+        try:
+            module = ast.parse(body_source)
+        except SyntaxError:
+            return self._fallback_return_rewrite(body_source, return_var)
+
+        has_return_stmt = any(isinstance(node, ast.Return) for node in ast.walk(module))
+        if not has_return_stmt:
+            return body_source
+
+        processed_body, _ = self._process_block_with_returns(module.body, return_var, existing_names)
+
+        new_module = ast.Module(body=processed_body, type_ignores=[])
+        new_module = ast.fix_missing_locations(new_module)
+        return "\n".join(ast.unparse(stmt) for stmt in new_module.body)
+
     def init_llm_client(self):
         api_key = os.getenv('OPENAI_API_KEY', 'sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b')
         self.client = LLMFactory.create_client(
@@ -146,8 +425,23 @@ class BaseCollector():
                             }
             
             # 然后处理导入语句
+            parent_map = {}
+            for parent in ast.walk(tree):
+                for child in ast.iter_child_nodes(parent):
+                    parent_map[child] = parent
+
+            def is_inside_method(target_node):
+                current = parent_map.get(target_node)
+                while current:
+                    if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        return True
+                    current = parent_map.get(current)
+                return False
+
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
+                    if is_inside_method(node):
+                        continue
                     for name in node.names:
                         module_path = name.name
                         key = name.asname if name.asname else module_path.split(".")[-1]
@@ -159,9 +453,11 @@ class BaseCollector():
                         }
                 
                 elif isinstance(node, ast.ImportFrom):
+                    if is_inside_method(node):
+                        continue
                     module = node.module if node.module else ''
                     source, path = self._get_module_info(module, file_path, node.level)
-                    
+
                     for name in node.names:
                         if name.name == '*':
                             imports[f'{module}.*'] = {
@@ -268,20 +564,37 @@ class BaseCollector():
         """
         caller_content, caller_tree = self._read_file(caller_file)
         caller_lines = caller_content.splitlines()
-        # 遍历AST找到所有import语句
+        # find all import statements
         last_import_line = 0
         lines_without_import = 0
         
+        # we can't insert import statements inside docstring
+        docstring = False
+        # some file starts with docstring, so we need to skip the docstring part
+        first_docstring = False
         for lineno, line in enumerate(caller_lines):
+            if line.strip().startswith('"""'):
+                docstring = not docstring
+                if lineno < 3:
+                    first_docstring = True
+            if line.strip().endswith('""""') and line.strip() != '"""':
+                docstring = not docstring
+                first_docstring = False
+            if docstring:
+                if not first_docstring:
+                    lines_without_import += 1
+                    if lines_without_import > 3:
+                        break
+                continue
             if line.startswith("import") or line.strip().startswith("from"):
                 last_import_line = lineno
                 lines_without_import = 0
             elif line and not line.startswith('#'):
                 # 只计算非空且非注释行
                 lines_without_import += 1
-                if lines_without_import > 5:
+                if lines_without_import > 3:
                     break
-        
+
         return last_import_line
 
     def _get_imports_from_callee(self, caller, callee) -> list:
@@ -295,7 +608,8 @@ class BaseCollector():
         
         for imp in callee_used_imports:
             # 检查是否在callee文件中定义或导入
-            if not any(imp.startswith(ci) for ci in caller_imports.keys()):
+            # if not any(imp.startswith(ci) for ci in caller_imports.keys()):
+            if imp not in caller_imports:
                 if imp in callee_imports:
                     info = callee_imports[imp]
                     needed_imports.append((imp, info))
@@ -303,7 +617,7 @@ class BaseCollector():
         return needed_imports
 
     def replace_caller_from_callee(self, caller, callee):
-        ret = self._replace_caller_from_callee_gpt(caller, callee)
+        ret = self._replace_caller_from_callee(caller, callee)
         return ret
 
     def _replace_caller_from_callee_gpt(self, caller, callee):
@@ -388,7 +702,7 @@ Callee:
         start_indent = len(python_code_lines[0]) - len(python_code_lines[0].lstrip())
         
         indent = len(original_call[0]) - len(original_call[0].lstrip())
-        indented_body = '\n'.join([' ' * (indent + len(line) - len(line.lstrip()) - start_indent) + line for line in python_code_lines])
+        indented_body = '\n'.join([' ' * (indent + len(line) - len(line.lstrip()) - start_indent) + line.lstrip() for line in python_code_lines])
         # 收集caller中的替换信息
         return {
             'start': start_line,
@@ -557,20 +871,13 @@ Callee:
             # 检查是否提供了足够的位置参数
             if len(actual_args) < min_args and not args_info['varargs']:
                 raise ValueError(f"Not enough positional arguments. Expected at least {min_args}, got {len(actual_args)}")
-            
+            special_position = args_info['is_classmethod'] or (len(args_info['args']) > 0 and args_info['args'][0] == 'self')
             # 处理普通位置参数
             for i, arg_name in enumerate(args_info['args']):
                 # 如果是第一个参数，需要特殊处理
-                if i == 0:
-                    if args_info['is_staticmethod']:
-                        # 静态方法不需要特殊处理第一个参数
-                        if i < len(actual_args):
-                            arg_mapping[arg_name] = actual_args[i]
-                        elif arg_name in actual_kwargs:
-                            arg_mapping[arg_name] = actual_kwargs[arg_name]
-                        else:
-                            arg_mapping[arg_name] = args_info['defaults'][i - (len(args_info['args']) - len(args_info['defaults']))]
-                    elif args_info['is_classmethod']:
+                
+                if special_position and i == 0:
+                    if args_info['is_classmethod']:
                         # 类方法的第一个参数是cls
                         if isinstance(call_ast.func, ast.Attribute):
                             # 如果是类方法调用 (如 ClassName.method())
@@ -582,6 +889,7 @@ Callee:
                         else:
                             # 如果通过关键字参数传入了cls
                             arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
+                        special_position = True
                     else:
                         # 普通实例方法，第一个参数是self
                         if i < len(actual_args):
@@ -594,7 +902,7 @@ Callee:
                     # 处理其他参数，需要考虑参数偏移
                     # 对于实例方法和类方法，实际参数索引需要-1，因为第一个参数(self/cls)已经被特殊处理
                     arg_index = i
-                    if not args_info['is_staticmethod']:
+                    if special_position:
                         arg_index = i - 1
                     
                     if arg_index < len(actual_args):
@@ -641,6 +949,9 @@ Callee:
                 all_params.add(args_info['varargs'])
             if args_info['varkw']:
                 all_params.add(args_info['varkw'])
+            assigned_param_names = local_vars.intersection(all_params)
+            assigned_param_aliases = {name: name for name in assigned_param_names}
+            alias_to_param = {alias: param for param, alias in assigned_param_aliases.items()}
             
             # 1. 先处理入参的重命名
             param_name_mapping = {}
@@ -648,54 +959,81 @@ Callee:
             
             # 处理位置参数和关键字参数
             for arg_name, arg_value in arg_mapping.items():
+                if arg_name in assigned_param_names:
+                    continue
                 # 如果实参是一个变量名，而不是常量或表达式
                 if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg_value) and not arg_value.startswith('_'):
                     param_name_mapping[arg_name] = arg_value
                 else:
                     ## self这种替换要在常量替换之后进行
                     other_param_mapping[arg_name] = arg_value
-            
-            
+
+
             # 只重命名不是入参的局部变量
-            local_only_vars = local_vars - all_params
-            
+            local_only_vars = (local_vars - all_params) | assigned_param_names
+
             # 找出与caller中局部变量冲突的变量
             conflicting_vars = local_only_vars.intersection(caller_locals)
-            
+
             # 处理局部变量
             for var in local_only_vars:
                 if var in conflicting_vars:
                     # 只有发生冲突时才重命名
                     prefix = '_'
-                    while prefix + var in conflicting_vars:
+                    new_name = f"{prefix}{var}"
+                    while new_name in caller_locals or new_name in local_vars or new_name in all_params:
                         prefix += '_'
-                    
-                    modified_body = re.sub(
-                        r'\b' + var + r'\b',
-                        f'{prefix}{var}',
-                        modified_body
+                        new_name = f"{prefix}{var}"
+
+                    modified_body = self._safe_replace_identifier(
+                        modified_body,
+                        var,
+                        new_name
                     )
-            
+                    if var in alias_to_param:
+                        original_param = alias_to_param.pop(var)
+                        assigned_param_aliases[original_param] = new_name
+                        alias_to_param[new_name] = original_param
+                    local_vars.discard(var)
+                    local_vars.add(new_name)
+
+            if assigned_param_names:
+                ordered_assigned_params = []
+                for name in args_info['args']:
+                    if name in assigned_param_names:
+                        ordered_assigned_params.append(name)
+                for name in args_info['kwonly_args']:
+                    if name in assigned_param_names:
+                        ordered_assigned_params.append(name)
+                if args_info['varargs'] and args_info['varargs'] in assigned_param_names:
+                    ordered_assigned_params.append(args_info['varargs'])
+                if args_info['varkw'] and args_info['varkw'] in assigned_param_names:
+                    ordered_assigned_params.append(args_info['varkw'])
+
+                initializer_lines = []
+                for param in ordered_assigned_params:
+                    alias_name = assigned_param_aliases.get(param, param)
+                    initializer_value = arg_mapping.get(param, 'None')
+                    initializer_lines.append(f"{alias_name} = {initializer_value}")
+
+                initializer_block = "\n".join(initializer_lines)
+                if modified_body.strip():
+                    modified_body = initializer_block + "\n" + modified_body
+                else:
+                    modified_body = initializer_block
+
             # 3. 最后处理入参的变量名替换
             for old_name, new_name in param_name_mapping.items():
-                modified_body = re.sub(r'\b' + old_name + r'\b', new_name, modified_body)
-            
+                modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+
             for old_name, new_name in other_param_mapping.items():
-                modified_body = re.sub(r'\b' + old_name + r'\b', new_name, modified_body)
-            # 处理return语句
-            if return_var:
-                # 将return语句替换为赋值语句
-                modified_body = re.sub(
-                    r'\breturn\s+([^\n;]+)',
-                    f'{return_var} = \\1',
-                    modified_body
-                )
-            else:
-                modified_body = re.sub(
-                    r'\breturn\s+([^\n;]+)',
-                    f'return \\1',
-                    modified_body
-                )
+                modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+            existing_names = set(all_params)
+            existing_names.update(local_vars)
+            existing_names.update(caller_locals)
+            if return_var and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', return_var):
+                existing_names.add(return_var)
+            modified_body = self._rewrite_returns_with_flag(modified_body, return_var, existing_names)
             
             # 缩进内联的代码
             indent = len(original_call[0]) - len(original_call[0].lstrip())

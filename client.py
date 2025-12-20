@@ -27,7 +27,7 @@ class LLMClient(ABC):
         os.makedirs("cache", exist_ok=True)
         self.cache = {}
         if os.path.exists(cache_file):
-            with open(cache_file) as f:
+            with open(cache_file, encoding="utf-8") as f:
                 self.cache = json.load(f)
         
     def save_cache(self):

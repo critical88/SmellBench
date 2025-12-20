@@ -24,23 +24,67 @@ def replace_file_content(file_path, new_content):
         print(f"Error replacing file {file_path}: {e}")
         return False
 
-def run_project_tests(project_path):
+def run_project_tests(project_path, test_file_paths):
     """Run the project's test suite"""
     try:
         # First try to install the project
         subprocess.run(['pip', 'install', '-e', '.'], cwd=project_path, check=True)
         # Then run tests
-        result = subprocess.run(['python', '-m', 'pytest'], cwd=project_path, capture_output=True, text=True)
+        result = subprocess.run(['python', '-m', 'pytest'] + test_file_paths, cwd=project_path, capture_output=True, text=True)
         return result.returncode == 0, result.stdout
     except subprocess.CalledProcessError as e:
         print(f"Error running tests: {e}")
         return False, str(e)
+
+def replace_and_test_caller(project_name, src_path, testsuites, caller_file_content, poject_dir="../project"):
+    # Define paths
+    base_project_path = poject_dir
+    project_path = os.path.join(base_project_path, project_name)
+    # Check if paths exist
+    if not os.path.exists(project_path):
+        print(f"Project directory not found for {project_name}")
+        return False
+
+    # Reset repository
+    if not reset_repository(project_path):
+        print(f"Project reset failed")
+        return False
+
+    # Prepare test file paths
+    test_file_paths = []
+    for test_module_path in testsuites:
+        path = test_module_path[0].lstrip(project_name).lstrip(".").replace(".", os.sep) + ".py"
+        file_path = os.path.join(base_project_path, project_name, path)
+        if os.path.exists(file_path):
+            test_file_paths.append(os.path.abspath(file_path))
+        else:
+            print(f"Test file not found: {path}")
+            return False
+
+    # Replace caller files
+    for code_item in caller_file_content:
+        module_path = code_item.get('module_path', '').lstrip(project_name).lstrip(".")
+        file_path = os.path.join(base_project_path, project_name, src_path, module_path.replace(".", os.sep) + ".py")
+        success = replace_file_content(file_path, code_item.get('code', ''))
+        if not success:
+            print(f"Failed to replace file {file_path}")
+            return False
+
+    # Run tests
+    success, output = run_project_tests(project_path, test_file_paths)
+    if success:
+        print(f"Tests passed for {project_name}")
+        return True
+    else:
+        print(f"Tests failed for {project_name}\nOutput: {output}")
+        return False
 
 def process_refactoring(project_name):
     # Define paths
     base_dir = "../"
     refactor_json_path = os.path.join(base_dir, 'analyze_methods', 'output', project_name, 'refactor_codes.json')
     base_project_path = os.path.join(base_dir, 'project')
+    success_refactor_json_path = os.path.join(base_dir, 'analyze_methods', 'output', project_name, 'successful_refactor_codes.json')
     project_path = os.path.join(base_project_path, project_name)
 
     # Check if paths exist
@@ -54,39 +98,33 @@ def process_refactoring(project_name):
     # Read refactoring JSON
     try:
         with open(refactor_json_path, 'r', encoding='utf-8') as f:
-            refactor_data = json.load(f)
+            json_data = json.load(f)
+            settings = json_data.get("settings", {})
+            refactor_data = json_data.get("refactor_codes", [])
     except Exception as e:
         print(f"Error reading refactor JSON for {project_name}: {e}")
         return False
 
-
+    src_path = settings.get("src_path", "")
     # Process each refactoring
+    successed_refactor_data = []
     for refactor_item in refactor_data:
-        # Reset repository
-        if not reset_repository(project_path):
-            return False
+        success = replace_and_test_caller(project_name, src_path, refactor_item['testsuites'], refactor_item['caller_file_content'])
         
-        caller_file_content = refactor_item.get('caller_file_content', [])
-        
-        # Replace caller files
-        for code_item in caller_file_content:
-            file_path = os.path.join(base_project_path, (code_item.get('module_path', '').replace(".", os.sep) + ".py"))
-            success = replace_file_content(file_path, code_item.get('code', ''))
-            if not success:
-                print(f"Failed to replace file {file_path}")
-                return False
-
-        # Run tests
-        success, output = run_project_tests(project_path)
         if success:
-            print(f"Tests passed for {project_name}")
-        else:
-            print(f"Tests failed for {project_name}\nOutput: {output}")
+            successed_refactor_data.append(refactor_item)
+    print("Number of successful refactorings:", len(successed_refactor_data))
+    with open(success_refactor_json_path, 'w', encoding='utf-8') as f:
+        json.dump({
+            "settings": settings,
+            "refactor_codes": successed_refactor_data
+        }, f, indent=4)
+    reset_repository(project_path)
 
 
 def main():
     # List of projects to process
-    projects = ['urllib3']  # Add more projects as needed
+    projects = ['click']  # Add more projects as needed
     
     results = {}
     for project in projects:
