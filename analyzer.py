@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Dict, Set, Tuple, List
 from long_method import LongMethodCollector
 from duplicated_method import DuplicatedMethodCollector
+from base_method import BaseCollector
 
 class MethodCallVisitor(ast.NodeVisitor):
     def __init__(self, project_path: str, project_name: str, src_path: str):
@@ -485,7 +486,6 @@ class MethodAnalyzer():
         all_calls = {}
         all_definitions = {}
         all_test_calls = {}
-        all_caller_graph = {}
         
         # 遍历所有Python文件
         for root, dirs, files in os.walk(project_path):
@@ -508,7 +508,6 @@ class MethodAnalyzer():
                         all_calls.update(calls)
                         all_definitions.update(definitions)
                         all_test_calls.update(test_calls)
-                        all_caller_graph = self._combine_graph(all_caller_graph, caller_graph)
                         print(f"Found {len(calls)} normal calls, {len(test_calls)} test calls, and {len(definitions)} definitions in {file}")
                     except Exception as e:
                         print(f"Error processing {file}: {e}")
@@ -530,19 +529,22 @@ class MethodAnalyzer():
             # 统计方法调用次数
             for called_method, call_locations in called_methods.items():
                 called_module, called_class, called_method_name = called_method
-                class_methods[(called_module, called_class, called_method_name)].append((module_path, class_name, caller_method_name, call_locations))
+                class_methods[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         result = []
-        collectors = [
+        collectors: List[BaseCollector] = [
             LongMethodCollector(self.project_path, self.project_name, self.src_path), 
-            # DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path)
+            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path)
         ]
+        refactored_count = 0
         for collector in collectors:
-            ret = collector.collect(class_methods, all_calls, all_definitions, all_caller_graph)
+            ret = collector.collect(class_methods, all_calls, all_definitions)
+            refactored_count += len(ret)
             filtered_ret = []
             for r in ret:
-                # if len(r['testsuites']) > 0:
-                filtered_ret.append(r)
+                if len(r['testsuites']) > 0:
+                    filtered_ret.append(r)
             result.extend(filtered_ret)
-        print(f"number of refactor_codes: {len(result)}")
+        print(f"number of refactor_codes: {refactored_count}")
+        print(f"number of refactor_codes with testunits: {len(result)}")
         return result
 

@@ -3,6 +3,8 @@ import json
 import os
 import re
 from client import LLMFactory
+from dotenv import load_dotenv
+
 class BaseCollector():
     def __init__(self, project_path, project_name, src_path) -> None:
         self.project_path = project_path
@@ -10,8 +12,21 @@ class BaseCollector():
         self.src_path = src_path
         self.file_cache = {}
         self.language = "python"
-        self.init_llm_client()
-        self.testsuites_cache = {}
+        self._init_llm_client()
+        self._init_testunit()
+
+    def _init_testunit(self):
+        testunit_file = os.path.join("output", self.project_name, f"function_testunit_mapping.json")
+        if not os.path.exists(testunit_file):
+            raise Exception("please first run `testunit_cover.py` to generate mapping file.")
+        with open(testunit_file, 'r', encoding='utf-8') as f:
+            self._function_testunit = json.load(f)['functions']
+    
+
+    
+    def get_file_from_module(self, module_path: str):
+
+        return os.path.join(self.project_path, self.project_name, self.src_path, module_path.lstrip(self.project_name).lstrip(".").replace(".", os.sep) + ".py")
     
     def _safe_replace_identifier(self, source: str, old_name: str, replacement: str) -> str:
         if not old_name:
@@ -293,48 +308,27 @@ class BaseCollector():
         new_module = ast.fix_missing_locations(new_module)
         return "\n".join(ast.unparse(stmt) for stmt in new_module.body)
 
-    def init_llm_client(self):
-        api_key = os.getenv('OPENAI_API_KEY', 'sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b')
-        self.client = LLMFactory.create_client(
-            'gpt',
-            api_key=api_key,
-            base_url="https://api2.mygptlife.com/v1"
-        )
+    def _init_llm_client(self):
+        load_dotenv()
 
-    def _find_related_testsuite(self, current_methods, all_caller_graph):
+        api_key = os.getenv('OPENAI_API_KEY')
+        base_url = os.getenv("OPENAI_BASE_URL")
+        self.client = LLMFactory.create_client()
+
+    def _find_related_testsuite(self, current_methods):
         if not current_methods:
             return set()
-        if isinstance(current_methods, tuple):
-            current_methods = [current_methods]
-        elif not isinstance(current_methods, list):
-            current_methods = [current_methods]
+        key = current_methods[0]
+        if current_methods[1] is None:
+            key += f":{current_methods[2]}"
+        else:
+            key += f":{current_methods[1]}.{current_methods[2]}"
+        
+        if key in self._function_testunit:
+            return set(self._function_testunit[key]['tests'])
+        
+        return set()
 
-        ret = set()
-        for method in current_methods:
-            if not method:
-                continue
-            ret.update(self._collect_testsuites(method, all_caller_graph, set()))
-        return ret
-
-    def _collect_testsuites(self, method, all_caller_graph, visiting):
-        cached = self.testsuites_cache.get(method)
-        if cached is not None:
-            return set(cached)
-        if method in visiting:
-            return set()
-
-        visiting.add(method)
-        suites = set()
-        for caller, is_test in all_caller_graph.get(method, []):
-            if is_test:
-                suites.add(caller)
-            else:
-                suites.update(self._collect_testsuites(caller, all_caller_graph, visiting))
-        visiting.remove(method)
-
-        if suites:
-            self.testsuites_cache[method] = frozenset(suites)
-        return suites
 
     def _read_file(self, file_path: str) -> tuple:
         if file_path in self.file_cache:
@@ -572,7 +566,11 @@ class BaseCollector():
         docstring = False
         # some file starts with docstring, so we need to skip the docstring part
         first_docstring = False
+        mutli_import = False
         for lineno, line in enumerate(caller_lines):
+            ## if the line contains inline comment, we need to ignore the comment part
+            if not line.startswith("#") and "#" in line:
+                line = line[:line.index("#")]
             if line.strip().startswith('"""'):
                 docstring = not docstring
                 if lineno < 3:
@@ -585,6 +583,14 @@ class BaseCollector():
                     lines_without_import += 1
                     if lines_without_import > 3:
                         break
+                continue
+            if line.strip().startswith("from") and line.strip().endswith('('):
+                lines_without_import = 0
+                mutli_import = True
+            if line.strip().endswith(")"):
+                mutli_import = False
+                last_import_line = lineno
+            if mutli_import:
                 continue
             if line.startswith("import") or line.strip().startswith("from"):
                 last_import_line = lineno
@@ -1049,7 +1055,7 @@ Callee:
                 'replacement': indented_body.splitlines(),
                 'imports': imports
             }
-    def collect(self, class_methods, all_calls, all_definitions, all_caller_graph):
+    def collect(self, class_methods, all_calls, all_definitions):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}

@@ -51,15 +51,15 @@ def replace_and_test_caller(project_name, src_path, testsuites, caller_file_cont
         return False
 
     # Prepare test file paths
-    test_file_paths = []
-    for test_module_path in testsuites:
-        path = test_module_path[0].lstrip(project_name).lstrip(".").replace(".", os.sep) + ".py"
-        file_path = os.path.join(base_project_path, project_name, path)
-        if os.path.exists(file_path):
-            test_file_paths.append(os.path.abspath(file_path))
-        else:
-            print(f"Test file not found: {path}")
-            return False
+    test_file_paths = testsuites
+    # for test_module_path in testsuites:
+    #     path = test_module_path[0].lstrip(project_name).lstrip(".").replace(".", os.sep) + ".py"
+    #     file_path = os.path.join(base_project_path, project_name, path)
+    #     if os.path.exists(file_path):
+    #         test_file_paths.append(os.path.abspath(file_path))
+    #     else:
+    #         print(f"Test file not found: {path}")
+    #         return False
 
     # Replace caller files
     for code_item in caller_file_content:
@@ -82,9 +82,9 @@ def replace_and_test_caller(project_name, src_path, testsuites, caller_file_cont
 def process_refactoring(project_name):
     # Define paths
     base_dir = "../"
-    refactor_json_path = os.path.join(base_dir, 'analyze_methods', 'output', project_name, 'refactor_codes.json')
+    refactor_json_path = os.path.join( 'output', project_name, 'refactor_codes.json')
     base_project_path = os.path.join(base_dir, 'project')
-    success_refactor_json_path = os.path.join(base_dir, 'analyze_methods', 'output', project_name, 'successful_refactor_codes.json')
+    success_refactor_json_path = os.path.join('output', project_name, 'successful_refactor_codes.json')
     project_path = os.path.join(base_project_path, project_name)
 
     # Check if paths exist
@@ -124,7 +124,7 @@ def process_refactoring(project_name):
 
 def main():
     # List of projects to process
-    projects = ['click']  # Add more projects as needed
+    projects = ['requests']  # Add more projects as needed
     
     results = {}
     for project in projects:

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from openai import OpenAI
 from dataclasses import dataclass
 import json
+from dotenv import load_dotenv
 @dataclass
 class LLMResponse:
     """LLM响应的数据类"""
@@ -15,23 +16,25 @@ class LLMResponse:
 class LLMClient(ABC):
     """LLM客户端基类"""
     
-    def __init__(self, api_key: str, base_url: str):
+    def __init__(self, api_key: str, base_url: str, model: str):
         self.api_key = api_key
         self.base_url = base_url
+        self.model = model
         self._initialize_client()
         self.times = 0
-        self.__init_cache()
-    
-    def __init_cache(self):
-        cache_file = os.path.join("cache", str(self.__class__.__name__) + "_cache.json")
-        os.makedirs("cache", exist_ok=True)
         self.cache = {}
+        
+    
+    def load_cache(self, model):
+        if len(self.cache) > 0:
+            return
+        cache_file = os.path.join("cache", str(self.__class__.__name__) + "_" + model + "_cache.json")
+        os.makedirs("cache", exist_ok=True)
         if os.path.exists(cache_file):
             with open(cache_file, encoding="utf-8") as f:
                 self.cache = json.load(f)
-        
-    def save_cache(self):
-        cache_file = os.path.join("cache", str(self.__class__.__name__) + "_cache.json")
+    def save_cache(self, model):
+        cache_file = os.path.join("cache", str(self.__class__.__name__) + "_" + model + "_cache.json")
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=2)
     @abstractmethod
@@ -47,8 +50,9 @@ class LLMClient(ABC):
             temperature: float = 0.7
             ) -> LLMResponse:
         """Send a chat request to the LLM"""
-
+        model = model or self.model
         key = md5(prompt.encode('utf-8')).hexdigest()
+        self.load_cache(model)
         if key in self.cache:
             return self.cache[key]
         
@@ -57,7 +61,7 @@ class LLMClient(ABC):
         
         response = self._chat(prompt, model, max_tokens, temperature)
         self.cache[key] = response.content
-        self.save_cache()
+        self.save_cache(model)
         return response.content
         
     @abstractmethod
@@ -72,7 +76,6 @@ class LLMClient(ABC):
 class GPTClient(LLMClient):
     """OpenAI GPT客户端实现"""
     
-    DEFAULT_MODEL = "gpt-4o-mini"
     
     def _initialize_client(self) -> None:
         self.client = OpenAI(
@@ -88,7 +91,7 @@ class GPTClient(LLMClient):
              ) -> LLMResponse:
         try:
             response = self.client.chat.completions.create(
-                model=model or self.DEFAULT_MODEL,
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=max_tokens,
                 temperature=temperature
@@ -104,15 +107,17 @@ class GPTClient(LLMClient):
 class QwenClient(LLMClient):
     """Qwen(千问)客户端实现"""
     
-    DEFAULT_MODEL = "qwen-turbo"
-    
     def _initialize_client(self) -> None:
         # 在这里初始化千问的API客户端
         # 由于千问也支持OpenAI兼容格式，我们使用OpenAI客户端
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+        import dashscope
+        
+        if dashscope is None:
+            raise ImportError(
+                "dashscope package is required for QwenClient. "
+                "Install it with `pip install dashscope`."
+            )
+        dashscope.api_key = self.api_key
     
     def _chat(self,
              prompt: str,
@@ -120,17 +125,19 @@ class QwenClient(LLMClient):
              max_tokens: int = 1000,
              temperature: float = 0.7
              ) -> LLMResponse:
-        super().chat(prompt, model, max_tokens, temperature)
+        from dashscope import Generation
         try:
-            response = self.client.chat.completions.create(
-                model=model or self.DEFAULT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
+            response = Generation.call(
+                model=model,
+                prompt=prompt,
                 max_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                result_format='text'
             )
+            content = response.output.text
             return LLMResponse(
-                content=response.choices[0].message.content,
-                model=model or self.DEFAULT_MODEL,
+                content=content,
+                model=model,
                 raw_response=response
             )
         except Exception as e:
@@ -140,21 +147,30 @@ class LLMFactory:
     """LLM客户端工厂类"""
     
     @staticmethod
-    def create_client(client_type: str, api_key: str, base_url: str) -> LLMClient:
+    def create_client(client_type: str = None, api_key: str = None, base_url: str = None, model: str = None) -> LLMClient:
         """Create a specific LLM client
         
         Args:
             client_type: 'gpt' or 'qwen'
             api_key: API key
             base_url: Base URL for the API
+            model: Model name
         
         Returns:
             LLMClient instance
         """
+        load_dotenv()
+        if client_type is None:
+            client_type = os.getenv('CLIENT_TYPE')
         if client_type.lower() == 'gpt':
-            return GPTClient(api_key=api_key, base_url=base_url)
+            api_key = api_key or os.getenv('OPENAI_API_KEY')
+            base_url = base_url or os.getenv('OPENAI_BASE_URL')
+            model = os.getenv('OPENAI_MODEL')
+            return GPTClient(api_key=api_key, base_url=base_url, model=model)
         elif client_type.lower() == 'qwen':
-            return QwenClient(api_key=api_key, base_url=base_url)
+            api_key = api_key or os.getenv('QWEN_API_KEY')  
+            model = os.getenv('QWEN_MODEL')
+            return QwenClient(api_key=api_key, base_url=base_url, model=model)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 

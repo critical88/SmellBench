@@ -8,11 +8,8 @@ class LongMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path) -> None:
         super().__init__(project_path, project_name, src_path)
     
-    def get_file_from_module(self, module_path):
-
-        return os.path.join(self.project_path, self.project_name, self.src_path, module_path.lstrip(self.project_name).lstrip(".").replace(".", os.sep) + ".py")
-
-    def collect(self, class_methods, all_calls, all_definitions, all_caller_graph):
+    
+    def collect(self, class_methods, all_calls, all_definitions):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -24,7 +21,7 @@ class LongMethodCollector(BaseCollector):
         在本方法中，主要是以单个方法为起点，搜索在此方法中调用的其他方法，并将搜索到的方法内容填充到caller中，以达到扩充caller内容的目的。
         """
         # 设置被调用方法总长度的阈值（行数）
-        TOTAL_CALLEE_LENGTH_THRESHOLD = 50
+        TOTAL_CALLEE_LENGTH_THRESHOLD = 30
         
         long_methods = []
         
@@ -75,7 +72,9 @@ class LongMethodCollector(BaseCollector):
             for replacement in sorted(replacements, key=lambda x: x['start'], reverse=True):
                 caller_method_definition_lines[replacement['rel_start']:replacement['rel_end']] = replacement['replacement']
                 imports.extend(replacement['imports'])
-            total_callee_lines = len(caller_method_definition_lines)
+            total_callee_lines = sum([len(r['replacement']) for r in replacements])
+
+            total_caller_lines = len(caller_method_definition_lines)
             statements = self._convert_imports_to_statements(imports, caller_file)
             last_import_line = self._get_last_import_line(caller_file)
             # 先替换在后面的内容，防止序号错乱
@@ -90,13 +89,14 @@ class LongMethodCollector(BaseCollector):
                 for stat in statements:
                     caller_lines.insert(last_import_line + 1, stat)
                 caller_lines[caller_method_definition['start_line'] - 1: caller_method_definition['end_line']] = caller_method_definition_lines
-            caller_end = caller_start + total_callee_lines
+            caller_end = caller_start + total_caller_lines
             before_refactor_code = [{"type": "caller", "start": caller_start, "end": caller_end, "code": "\n".join(caller_method_definition_lines), "module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}]
             # 如果被调用方法的总行数超过阈值
             if total_callee_lines > TOTAL_CALLEE_LENGTH_THRESHOLD:
-                testsuites = self._find_related_testsuite(caller_method, all_caller_graph)
+                testsuites = self._find_related_testsuite(caller_method)
                 long_methods.append({
                     "type": "LongMethod",
+                    "meta":{"calling_times": len(replacements), "total_caller_lines": total_caller_lines},
                     "testsuites": list(testsuites),
                     "total_callee_lines": total_callee_lines,
                     "after_refactor_code": after_refactor_code,

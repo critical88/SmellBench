@@ -1,0 +1,11 @@
+pytest
+coverage
+# requests
+pytest-httpbin
+PySocks
+# urllib3
+trustme
+trio
+quart
+quart_trio
+pytest-timeout

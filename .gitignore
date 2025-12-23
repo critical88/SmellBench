@@ -4,3 +4,5 @@ __pycache__/
 output/
 cache/
 run/refactor_eval
+*.out
+.env

@@ -15,7 +15,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from client import LLMFactory, LLMClient
 from collections import defaultdict
-import numpy as np
 from testunits import replace_and_test_caller
 
 
@@ -46,7 +45,7 @@ PROMPT_TEMPLATE = """{system}
 ### Response
 """
 
-PYTHON_FENCE_PATTERN = re.compile(r"```python\s+([\s\S]*?)```", re.IGNORECASE)
+PYTHON_FENCE_PATTERN = re.compile(r"```python[ \t]*\n([\s\S]*?)```", re.IGNORECASE)
 GENERIC_FENCE_PATTERN = re.compile(r"```([\s\S]*?)```", re.IGNORECASE)
 TOKEN_PATTERN = re.compile(r"\w+|\S", re.UNICODE)
 PYTHON_KEYWORDS = set(keyword.kwlist)
@@ -65,7 +64,7 @@ class Segment:
     meta: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.text = normalize_snippet(self.text)
+        self.text = self.text
 
 
 @dataclasses.dataclass
@@ -104,6 +103,9 @@ class CaseResult:
     test_passed: Optional[bool]
     details: Dict[str, Any] = dataclasses.field(default_factory=dict)
 
+    def __init__(self, **kwargs: Any) -> None:
+        for field in dataclasses.fields(self):
+            setattr(self, field.name, kwargs.get(field.name))
 
 def iterify(value: Any) -> List[Any]:
     if value is None:
@@ -178,7 +180,7 @@ def collect_code_blocks(value: Any) -> List[str]:
             blocks.append(snippet)
         return blocks
     for item in value:
-        blocks.append(f"file:{item['module_path']}\n```python\n{item['code']}\n```")
+        blocks.append(f"`file:{item['module_path']}` and the related code is: \n```python\n{item['code']}\n```")
     return blocks
 
 
@@ -289,9 +291,11 @@ class _FunctionCollector(ast.NodeVisitor):
 
 
 def _extract_functions_from_block(code_block: str) -> List[FunctionSnippet]:
+    code_block = normalize_snippet(code_block)
     try:
         tree = ast.parse(code_block)
     except SyntaxError:
+        print("code block could not be parsed:")
         return []
     collector = _FunctionCollector(code_block)
     collector.visit(tree)
@@ -641,7 +645,7 @@ class RefactorEvaluator:
         self.cases = data['refactor_codes']
         self.settings = data['settings']
         self.src_path = self.settings['src_path']
-        self.output_dir = Path(args.output_dir)
+        self.output_dir = Path(args.output_dir) / self.project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         if args.instruction_file:
             instruction = Path(args.instruction_file).read_text(encoding="utf-8").strip()
@@ -652,20 +656,10 @@ class RefactorEvaluator:
         self.instruction = instruction
         self.limit = args.limit
         self.verbose = args.verbose
-        self.cache_dir = self.output_dir
         self.llm_client: Optional[LLMClient] = None
-        if not args.reuse_cache_only:
-            api_key = args.api_key or os.environ.get("OPENAI_API_KEY")
-            base_url = args.base_url or os.environ.get("OPENAI_BASE_URL")
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY is required unless --reuse-cache-only is set.")
-            if not base_url:
-                raise RuntimeError("OPENAI_BASE_URL (or --base-url) is required unless --reuse-cache-only is set.")
-            self.llm_client = LLMFactory.create_client(
-                client_type=args.client_type,
-                api_key=api_key,
-                base_url=base_url,
-            )
+
+        self.llm_client = LLMFactory.create_client(client_type=args.client_type)
+            
         self.results: List[CaseResult] = []
 
     def _log(self, message: str) -> None:
@@ -715,10 +709,11 @@ class RefactorEvaluator:
         for index, case in enumerate(self.cases):
             if self.limit is not None and index >= self.limit:
                 break
+            if index == 0:
+                continue
             case_id = case_identifier(case, index)
             self._log(f"Processing {case_id}")
             result = self._process_case(case_id, case)
-            
             self.results.append(result)
         per_case_path = self.output_dir / "per_case_results.json"
         serialized = [dataclasses.asdict(result) for result in self.results]
@@ -749,13 +744,27 @@ class RefactorEvaluator:
         )
         caller_predictions = prediction.caller_segments
 
+        if len(prediction.caller_segments) == 0:
+            print(f"No caller predictions found for case {case_id}.")
+            return CaseResult(
+                case_id=case_id,
+                prompt_hash=prompt_hash,
+                callee_precision=callee_precision,
+                callee_recall=callee_recall,
+                callee_f1=callee_f1,
+                match_scores=0.0,
+                test_passed=False
+            )
+
+            
+
         caller_content = self._extract_content(caller_predictions, case)
 
         success = replace_and_test_caller(self.project_name, self.src_path, case['testsuites'], caller_content, self.project_path)
         if len(callee_matches) == 0:
             match_scores = 0.0
         else:  
-            match_scores = np.mean([round(item["score"], 3) for item in callee_matches]).item()
+            match_scores = sum([round(item["score"], 3) for item in callee_matches]) / len(callee_matches)
         details = {
             "num_predicted_callees": len(filtered_prediction_callees),
             "num_target_callees": len(ground_truth["callees"]),
@@ -823,17 +832,14 @@ class RefactorEvaluator:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="run/refactor_eval", help="Directory for cached outputs and reports.")
-    parser.add_argument("--model", default="gpt-4o-mini", help="Model name used for generation.")
+    parser.add_argument("--model", default="qwen-turbo", help="Model name used for generation.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
-    parser.add_argument("--base-url", default="https://api2.mygptlife.com/v1", help="Optional custom OpenAI-compatible base URL.")
     parser.add_argument("--client-type", default="gpt", choices=("gpt", "qwen"), help="LLM client backend defined in analyze_methods.client.")
-    parser.add_argument("--api-key", default="sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b", help="API key for the chat completion model.")
     parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature for the chat model.")
     parser.add_argument("--max-tokens", type=int, default=10000, help="Maximum tokens requested from the chat model.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")
     parser.add_argument("--similarity-threshold", type=float, default=0.4, help="Similarity threshold used for F1 matching.")
-    parser.add_argument("--reuse-cache-only", action="store_true", help="Skip LLM calls and rely on cached responses.")
     parser.add_argument("--instruction-file", help="Optional file that overrides the default user instruction.")
     parser.add_argument("--instruction", help="Inline instruction text overriding the default prompt instruction.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")

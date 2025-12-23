@@ -71,9 +71,13 @@ def main():
         "click": {
             "project_path": "../project",
             "src_path": "src/click"
-        }
+        },
+        "jinja": {
+            "project_path": "../project",
+            "src_path": "src/jinja2"
+        },
     }
-    project_name = "click"
+    project_name = "requests"
     src_path = projects[project_name]['src_path']
     project_path = projects[project_name]['project_path']
     project_lib = f"{project_path}/{project_name}/{src_path}"
