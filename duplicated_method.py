@@ -1,12 +1,13 @@
 import ast
 import os
 from base_method import BaseCollector
+from collections import defaultdict
 
 class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path) -> None:
         super().__init__(project_path, project_name, src_path)
     
-    def collect(self, class_methods, all_calls, all_definitions):
+    def collect(self, class_methods, all_calls, all_definitions, all_class_parents, family_classes):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -19,16 +20,21 @@ class DuplicatedMethodCollector(BaseCollector):
         """
         # 设置被调用次数的阈值（次数）
         TOTAL_CALLER_SIZE_THRESHOLD = 3
+        # we discard the short callee, which is hard to recognize 
+        CALLEE_MINIMAL_LEN = 5
         
         duplicated_methods = []
         # 遍历所有调用者方法
         for callee_method, caller_methods in class_methods.items():
             if len(caller_methods) < TOTAL_CALLER_SIZE_THRESHOLD:
                 continue
+            definition, modified_called_method = self._find_callee(callee_method, all_definitions, all_class_parents)
             called_definition = all_definitions.get(callee_method)
             if not called_definition or not called_definition.get('source'):
                 continue
-
+            callee_lines = len(called_definition['source'].splitlines())
+            if callee_lines < CALLEE_MINIMAL_LEN:
+                continue
             callee_file = self.get_file_from_module(callee_method[0])
             callee = {"source": called_definition['source'], 'decorators': called_definition['decorators'], "file": callee_file }
             callee['position'] = {"module_path": callee_method[0], "class_name": callee_method[1], "method_name": callee_method[2]}
@@ -39,11 +45,13 @@ class DuplicatedMethodCollector(BaseCollector):
             testsuites = set()
             valid_calling_times = 0
             
+            caller_replacement_dict = defaultdict(dict)
             for caller_composite in caller_methods:
                 # ('urllib3.src.urllib3.contribopenssl', 'WrappedSocket', 'recv')
                 caller_method = caller_composite['position']
+                caller_module = caller_method[0]
                 caller_locations = caller_composite['call_locations']
-                caller_file = self.get_file_from_module(caller_method[0])
+                caller_file = self.get_file_from_module(caller_module)
                 
                 if not os.path.exists(caller_file):
                     continue
@@ -58,7 +66,7 @@ class DuplicatedMethodCollector(BaseCollector):
                     caller['source'] = caller_method_definition['source']
                     caller['position'] = {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
                     caller['file'] = caller_file
-                    caller_replacement = self.replace_caller_from_callee(caller, callee)
+                    caller_replacement = self.generate_replacement_caller_from_callee(caller, callee, all_class_parents)
                     if caller_replacement is None:
                         continue
                         
@@ -73,45 +81,27 @@ class DuplicatedMethodCollector(BaseCollector):
                     replacements.append(caller_replacement)
                 if len(replacements) == 0:
                     continue
-
-                caller_content, caller_tree = self._read_file(caller_file)
-                # 分析调用者的文件
-                caller_lines = caller_content.splitlines()
-                caller_method_definition_lines = caller_method_definition['source'].splitlines()
-                imports = []
-                for replacement in sorted(replacements, key=lambda x: x['start'], reverse=True):
-                    caller_method_definition_lines[replacement['rel_start']:replacement['rel_end']] = replacement['replacement']
-                    imports.extend(replacement['imports'])
-                total_callee_lines = sum([len(r['replacement']) for r in replacements])
-                caller_method_len = len(caller_method_definition_lines)
-                
-                statements = self._convert_imports_to_statements(imports, caller_file)
-                last_import_line = self._get_last_import_line(caller_file)
-                # 先替换在后面的内容，防止序号错乱
-                caller_start = caller_method_definition['start_line'] - 1
-                
-                if last_import_line < caller_method_definition['start_line']:
-                    caller_lines[caller_method_definition['start_line'] - 1: caller_method_definition['end_line']] = caller_method_definition_lines
-                    for stat in statements:
-                        caller_lines.insert(last_import_line + 1, stat)
-                    caller_start += len(statements)
-                else:
-                    for stat in statements:
-                        caller_lines.insert(last_import_line + 1, stat)
-                    caller_lines[caller_method_definition['start_line'] - 1: caller_method_definition['end_line']] = caller_method_definition_lines
-                caller_end = caller_start + caller_method_len
-                after_refactor_code.append(after_refactor)
-                before_refactor = {"type": "caller", "start": caller_start, "end": caller_end, "code": "\n".join(caller_method_definition_lines), "module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
-                before_refactor_code.append(before_refactor)
-                caller_file_content = {"code": "\n".join(caller_lines), "module_path": caller_method[0], "method_name": caller_method[2]}
-                caller_file_contents.append(caller_file_content)
-                valid_calling_times += len(replacements)
+                caller_replacement_dict[caller_module][caller_method] = replacements
                 testsuites.update(self._find_related_testsuite(caller_method))
+                after_refactor_code.append(after_refactor)
+                valid_calling_times += len(replacements)
+            for caller_module, caller_replacements in caller_replacement_dict.items():
+
+                before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module, all_definitions)
+                before_refactor_code.extend(before_refactors)
+
+                caller_file_contents.append({
+                    "code": "\n".join(caller_lines), 
+                    "module_path": caller_module, 
+                    "file_suffix": f"dup_{callee_method[2]}"
+                })
+                
+            if len(before_refactor_code) == 0:
+                continue
             duplicated_methods.append({
                 "type": "DuplicatedMethod",
-                "meta":{"calling_times": valid_calling_times},
+                "meta":{"calling_times": valid_calling_times, "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
-                "total_callee_lines": total_callee_lines,
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
                 "caller_file_content": caller_file_contents

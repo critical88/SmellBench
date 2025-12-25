@@ -4,11 +4,15 @@ import os
 import re
 from client import LLMFactory
 from dotenv import load_dotenv
+from typing import Dict, List, Tuple
+import textwrap
+
 
 class BaseCollector():
-    def __init__(self, project_path, project_name, src_path) -> None:
+    def __init__(self, project_path:str, project_name:str, src_path:str) -> None:
         self.project_path = project_path
         self.project_name = project_name
+        self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.src_path = src_path
         self.file_cache = {}
         self.language = "python"
@@ -22,14 +26,35 @@ class BaseCollector():
         with open(testunit_file, 'r', encoding='utf-8') as f:
             self._function_testunit = json.load(f)['functions']
     
-
+    def _find_callee(self, called_method, all_definitions, all_class_parents):
+        definition = all_definitions.get(called_method)
+        parents = []
+        cur_class = (called_method[0], called_method[1])
+        if cur_class in all_class_parents:
+            parents = all_class_parents[cur_class]
+        cache_parents = set()
+        while not definition and len(parents) > 0:
+            cur_class = parents.pop()
+            if cur_class in cache_parents:
+                continue
+            called_method = (cur_class[0], cur_class[1], called_method[2])
+            definition = all_definitions.get((cur_class[0], cur_class[1], called_method[2]))
+            cache_parents.add(cur_class)
+            if cur_class in all_class_parents:
+                parents.extend(all_class_parents[cur_class])
+        if definition is None or not definition.get('source'):
+            return None, None
+        called_method = (cur_class[0], cur_class[1], called_method[2])
+        return definition, called_method
     
     def get_file_from_module(self, module_path: str):
 
-        return os.path.join(self.project_path, self.project_name, self.src_path, module_path.lstrip(self.project_name).lstrip(".").replace(".", os.sep) + ".py")
+        return os.path.join(self.project_path, self.project_name, self.src_path, module_path.lstrip(self.module_name).lstrip(".").replace(".", os.sep) + ".py")
     
     def _safe_replace_identifier(self, source: str, old_name: str, replacement: str) -> str:
         if not old_name:
+            return source
+        if old_name == replacement:
             return source
         try:
             tree = ast.parse(source)
@@ -340,10 +365,7 @@ class BaseCollector():
         return file_contents, file_tree
 
 
-    def _is_project_module(self, module_path: str) -> bool:
-        """判断是否是项目内部模块"""
-        project_prefix = f"{self.project_name}.{self.src_path}".replace("/", ".").replace(os.sep, ".")
-        return module_path.startswith(project_prefix)
+    
     def _get_module_info(self, module_path: str, current_file: str, level: int = 0) -> tuple:
         """
         解析模块路径，返回 (source, absolute_path)
@@ -622,10 +644,65 @@ class BaseCollector():
         
         return needed_imports
 
-    def replace_caller_from_callee(self, caller, callee):
-        ret = self._replace_caller_from_callee(caller, callee)
+    def generate_replacement_caller_from_callee(self, caller, callee, all_class_parents):
+        ret = self._generate_replace_caller_from_callee(caller, callee, all_class_parents)
         return ret
+    
+    def do_replacement(self, replacements_dict: Dict[Tuple, Dict], caller_module, all_definitions):
+        caller_file = self.get_file_from_module(caller_module)
+        caller_content, caller_tree = self._read_file(caller_file)
+        # 分析调用者的文件
+        caller_lines = caller_content.splitlines()
+        before_refactor_code = []
+        imports = []
+        caller_replacements = []
+        for caller_method, replacements in replacements_dict.items():
+            caller_method_definition = all_definitions[caller_method]
+            caller_method_definition_lines = caller_method_definition['source'].splitlines()
+            modified_len = 0
+            for replacement in sorted(replacements, key=lambda x: x['start'], reverse=True):
+                caller_method_definition_lines[replacement['rel_start']:replacement['rel_end']] = replacement['replacement']
+                imports.extend(replacement['imports'])
+                modified_len += len(replacement['replacement']) - (replacement['rel_end'] - replacement['rel_start'])
+            total_callee_lines = sum([len(r['replacement']) for r in replacements])
+            
+            caller_replacements.append({
+                "caller_start": caller_method_definition['start_line'], 
+                "caller_method": caller_method,
+                "caller_method_definition": caller_method_definition,
+                "modified_method_lines": caller_method_definition_lines,
+                "modified_len": modified_len,
+                })
+        last_import_line = self._get_last_import_line(caller_file)
+        statements = self._convert_imports_to_statements(imports, caller_file)
 
+        sum_modified_len = sum([x['modified_len'] for x in caller_replacements])
+
+        sum_modified_len += len(statements)
+        ## assume import statements always locate the very first of the files.
+        ## thus we first replace the caller_replacement and then insert import statement
+        for caller_replacement in sorted(caller_replacements, key=lambda x: x['caller_start'], reverse=True):
+            caller_method_definition = caller_replacement['caller_method_definition']
+            caller_method_definition_lines = caller_replacement['modified_method_lines']
+            sum_modified_len = sum_modified_len - caller_replacement['modified_len']
+            caller_method = caller_replacement['caller_method']
+            
+            caller_lines[caller_method_definition['start_line'] - 1: caller_method_definition['end_line']] = caller_method_definition_lines
+            
+            caller_method_len = len(caller_method_definition_lines)
+            
+            caller_start = caller_method_definition['start_line'] - 1 + sum_modified_len
+            caller_end = caller_start + caller_method_len
+            
+            before_refactor = {"type": "caller", "start": caller_start, "end": caller_end, "code": "\n".join(caller_method_definition_lines), "module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
+            before_refactor_code.append(before_refactor)
+
+        
+        for stat in statements:
+            caller_lines.insert(last_import_line + 1, stat)
+        
+        return before_refactor_code, caller_lines
+        
     def _replace_caller_from_callee_gpt(self, caller, callee):
         ## 处理Import的问题
         imports = self._get_imports_from_callee(caller, callee)
@@ -717,7 +794,7 @@ Callee:
             'imports': imports
         }
 
-    def _replace_caller_from_callee(self, caller, callee):
+    def _generate_replace_caller_from_callee(self, caller, callee, all_class_parents):
         """
         caller:调用者，{"file": caller_file, "caller_method": caller_method, "line_number": line_number, "col_offset": col_offset, "end_line_number": end_line_number}
         callee:被调用者, {"source": source, "file": file, "position": {"module_path": module, "class_name": class_name, "method_name": method_name}}
@@ -756,8 +833,8 @@ Callee:
         
         # 获取位置参数
         for arg in method_ast.args.args:
-            if arg.arg != 'self':
-                args_info['args'].append(arg.arg)
+            # if arg.arg != 'self':
+            args_info['args'].append(arg.arg)
         
         # 获取*args参数
         if method_ast.args.vararg:
@@ -825,7 +902,7 @@ Callee:
         
             # 分析调用语句，获取实际参数
             # 将多行调用合并成一行
-            call_line = "\n".join(original_call).strip()
+            call_line = textwrap.dedent("\n".join(original_call))
             # 解析整个表达式
             try:
                 expr_ast = ast.parse(call_line)
@@ -857,6 +934,19 @@ Callee:
                 
             if not isinstance(call_ast, ast.Call):
                 # 该调用可能只是某些方法的入参，或者计算表达式的一部分，因此无需考虑
+                continue
+            called_name = None
+            if isinstance(call_ast.func, ast.Attribute):
+                called_name = call_ast.func.attr
+            elif isinstance(call_ast.func, ast.Name):
+                called_name = call_ast.func.id
+            else:
+                ## maybe the consecutive calling, such as `help_option(*help_option_names)(self)``
+                continue
+            if called_name != callee['position']['method_name']:
+                ## this indicates the first calling method is not the callee in this line,
+                ## e.g., add_data(self.parse_tuple(with_condexpr=True))
+                ## first calling_method = parse_tuple but call_ast.func.id = add_data
                 continue
             
             # 获取位置参数
@@ -896,6 +986,8 @@ Callee:
                             # 如果通过关键字参数传入了cls
                             arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
                         special_position = True
+                    elif arg_name == 'self':
+                        arg_mapping[arg_name] = ast.unparse(call_ast.func.value)
                     else:
                         # 普通实例方法，第一个参数是self
                         if i < len(actual_args):
@@ -1055,9 +1147,10 @@ Callee:
                 'replacement': indented_body.splitlines(),
                 'imports': imports
             }
-    def collect(self, class_methods, all_calls, all_definitions):
+        
+    def collect(self, callee_mapping, all_calls, all_definitions, all_class_parents, family_classes):
         """
-        @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
+        @param callee_mapping: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
         @param all_definitions: {(called_module, called_class, called_method_name): definition}
         

@@ -5,14 +5,23 @@ from typing import Dict, Set, Tuple, List
 from long_method import LongMethodCollector
 from duplicated_method import DuplicatedMethodCollector
 from base_method import BaseCollector
+import json
+import traceback
 
 class MethodCallVisitor(ast.NodeVisitor):
-    def __init__(self, project_path: str, project_name: str, src_path: str):
+    def __init__(self, 
+                 project_path: str, 
+                 project_name: str, 
+                 src_path: str, 
+                 all_classes: Set[Tuple], 
+                 class_parent: Dict[Tuple, List[Tuple]],
+                 function_variables: Dict[str, Dict[str, List[str]]]):
         self.current_class = None
         self.current_method = None
         # self.file_path = file_path
         self.project_path = project_path
         self.project_name = project_name
+        self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.src_path = src_path
         
         # 存储普通方法调用信息：{(模块路径, 类名, 方法名): {(模块路径, 类名, 被调用方法名)}}
@@ -21,13 +30,20 @@ class MethodCallVisitor(ast.NodeVisitor):
         self.test_method_calls = defaultdict(dict)
         # 存储方法定义信息：{(模块路径, 类名, 方法名): 方法信息}
         self.method_definitions = {}
+        self.all_classes = all_classes
+        self.class_parent = class_parent
+        self.function_variables = function_variables
+        self._init_vars()
 
-        self.caller_graph = defaultdict(set)
+    
+    def _init_vars(self):
         self.class_attr_types = defaultdict(dict)
+        self.class_methods = defaultdict(set)
         self.variable_types_stack = []
         self.global_var_types = {}
         self.local_class_names = set()
-        
+
+
     def is_test_file(self, file_path: str) -> bool:
         """判断是否是测试文件"""
         file_name = os.path.basename(file_path).lower()
@@ -67,16 +83,12 @@ class MethodCallVisitor(ast.NodeVisitor):
             rel_path = os.path.relpath(file_path, src_prefix)
         else:
             rel_path = os.path.relpath(file_path, os.path.join(self.project_path, self.project_name))
-        self.module_path = self.project_name + "." + rel_path.replace(os.sep, '.').replace('.py', '')
+        self.module_path = self.module_name + "." + rel_path.replace(os.sep, '.').replace('.py', '')
         # 清空导入映射，因为每个文件的导入都是独立的
-        self.imports = {}
+        self.imports: Dict[str, str]= {}
         # 读取文件内容并保存原始行
         self.file_lines = content.splitlines()
-        self.caller_graph = defaultdict(set)
-        self.class_attr_types = defaultdict(dict)
-        self.variable_types_stack = []
-        self.global_var_types = {}
-        self.local_class_names = set()
+        self._init_vars()
         
     def visit_ClassDef(self, node):
         old_class = self.current_class
@@ -127,6 +139,44 @@ class MethodCallVisitor(ast.NodeVisitor):
                 if isinstance(decorator.value, ast.Name) and decorator.value.id == 'typing' and decorator.attr == 'overload':
                     return True
         return False
+    
+    def _bind_method_variables(self, module, class_name, method_name):
+        func = ""
+        if class_name is not None:
+            func += class_name + "."
+        func += method_name
+        key = f"{module}:{func}"
+        if key not in self.function_variables:
+            return 
+        variables = self.function_variables[key]
+        for vars, types in variables.items():
+            if len(types) == 0:
+                continue
+            module = ".".join(types[0].split(".")[:-1]) 
+            _cls = types[0].split(".")[-1]
+            if (module, _cls) in self.all_classes:
+                self._bind_target_type(vars, (module, _cls))
+    def _bind_variables(self):
+        """
+        first bind the __init__ func of ancestors
+        then bind the __init__ func of current class
+        finally bind the variables in current method
+        """
+        # bind __init__ func of ancestors
+        if self.current_class is not None:
+            parent_key = (self.module_path, self.current_class)
+            if parent_key in self.class_parent:
+                ancestors = self.class_parent[parent_key]
+                while len(ancestors) > 0:
+                    cur_parent = ancestors.pop()
+                    if cur_parent in self.class_parent:
+                        ancestors += self.class_parent[cur_parent]
+                    self._bind_method_variables(cur_parent[0], cur_parent[1], "__init__")
+            # then bind the __init__ func of current class
+            self._bind_method_variables(self.module_path, self.current_class, "__init__")
+        ## finally bind the variables in current method
+        self._bind_method_variables(self.module_path, self.current_class, self.current_method)
+
 
     def visit_FunctionDef(self, node):
         method_key = (self.module_path, self.current_class, node.name)
@@ -145,12 +195,17 @@ class MethodCallVisitor(ast.NodeVisitor):
             # 忽略带有@typing.overload装饰器的方法
         if self.is_typing_overload(node):
             return
+
+        if self.current_class:
+            class_key = (self.module_path, self.current_class)
+            self.class_methods[class_key].add(node.name)
             
         old_method = self.current_method
         self.current_method = node.name
         
         # 存储方法定义信息，包含完整的模块路径
         self.variable_types_stack.append({})
+        self._bind_variables()
         self.generic_visit(node)
         self.variable_types_stack.pop()
         self.current_method = old_method
@@ -161,9 +216,13 @@ class MethodCallVisitor(ast.NodeVisitor):
     def is_module_directory(self, module_path):
         return os.path.exists(os.path.join(self.project_path, module_path.replace(".", os.sep)))
     
-    def is_camel_case(self, name):
+    def is_class(self, module_name, class_name):
+        return (module_name, class_name) in self.all_classes
+    def is_camel_case(self, name: str):
+        if name.startswith("_"):
+            name = name.lstrip("_")
         return name[0].isupper() and not all(c.isupper() for c in name) 
-    def is_special_func(self, method_name):
+    def is_special_func(self, method_name: str):
         return method_name.startswith("__") and method_name.endswith("__")
     def visit_Call(self, node):
         if self.current_method is None or self.is_special_func(self.current_method):
@@ -179,18 +238,19 @@ class MethodCallVisitor(ast.NodeVisitor):
         is_test_method = self.is_test_method(caller)
         if isinstance(node.func, ast.Name):
             called_method_name = node.func.id
+            if self._is_constructor_call(node.func):
+                return
             if self.is_special_func(called_method_name):
                 return
             # 检查是否是类方法调用
             if self.current_class and called_method_name in self.class_attr_types[self.current_class]:
                 called_method = (self.module_path, self.current_class, called_method_name)
                 self._store_call(caller, called_method, node, is_test)
-                self.caller_graph[called_method].add((caller, is_test_method))
                 return
             # 检查是否是工具类方法调用
             if called_method_name in self.imports:
                 module_path = self.imports[called_method_name]
-                if not module_path.startswith(self.project_name):
+                if not module_path.startswith(self.module_name):
                     return
                 if self.module_exists(module_path):
                     called_method = (module_path, None, called_method_name)
@@ -202,12 +262,11 @@ class MethodCallVisitor(ast.NodeVisitor):
                     if from_name == called_method_name:
                         called_method = (module_path, None, called_method_name)
                     else:
-                        if self.is_camel_case(from_name):
+                        if self.is_class(module_path, from_name):
                             called_method = (module_path, from_name, called_method_name)
                         else:
                             return
                 self._store_call(caller, called_method, node, is_test)
-                self.caller_graph[called_method].add((caller, is_test_method))
                 return
 
         if isinstance(node.func, ast.Attribute):
@@ -234,8 +293,7 @@ class MethodCallVisitor(ast.NodeVisitor):
                 if called_method not in self.method_definitions:
                     return 
                 ### self.method，此处的method可能会根据不同的object而变化，需要进一步确认
-                # self._store_call(caller, called_method, node, is_test)
-                self.caller_graph[called_method].add((caller, is_test_method))
+                self._store_call(caller, called_method, node, is_test)
                 handled_call = True
             ## object.method()调用
             else:
@@ -243,7 +301,7 @@ class MethodCallVisitor(ast.NodeVisitor):
                 if resolved:
                     module_path, class_name = resolved
                     called_method = (module_path, class_name, called_method_name)
-                    self.caller_graph[called_method].add((caller, is_test_method))
+                    self._store_call(caller, called_method, node, is_test)
                     handled_call = True
             
             # 2. 工具类方法调用 (module.method) 或类方法调用 (ClassName.method)
@@ -263,7 +321,7 @@ class MethodCallVisitor(ast.NodeVisitor):
                     if name_id not in self.imports:
                         return
                     module_path = self.imports[name_id]
-                    if not module_path.startswith(self.project_name):
+                    if not module_path.startswith(self.module_name):
                         return
                     if self.module_exists(module_path):
                         called_method = (module_path, None, called_method_name)
@@ -278,13 +336,12 @@ class MethodCallVisitor(ast.NodeVisitor):
                             called_method = (module_path, None, called_method_name)
                         else:
                             ## 检查是否符合驼峰命名法（至少包含一个大写字母）
-                            if self.is_camel_case(from_name):
+                            if self.is_class(module_path, from_name):
                                 called_method = (module_path, from_name, called_method_name)
                             ## 不符合驼峰表示其代表一个对象的调用方法，例如dict.get()方法
                             else:
                                 return
                     self._store_call(caller, called_method, node, is_test)
-                    self.caller_graph[called_method].add((caller, is_test_method))
             
         self.generic_visit(node)
     
@@ -325,11 +382,13 @@ class MethodCallVisitor(ast.NodeVisitor):
     def _bind_target_type(self, target, value_type):
         if not value_type:
             return
-        if isinstance(target, ast.Name):
+        if isinstance(target, ast.Name) or isinstance(target, str):
+            if isinstance(target, ast.Name):
+                target = target.id
             if self.variable_types_stack:
-                self.variable_types_stack[-1][target.id] = value_type
+                self.variable_types_stack[-1][target] = value_type
             else:
-                self.global_var_types[target.id] = value_type
+                self.global_var_types[target] = value_type
         elif isinstance(target, ast.Attribute):
             if isinstance(target.value, ast.Name) and \
                target.value.id == 'self' and \
@@ -403,12 +462,15 @@ class MethodCallVisitor(ast.NodeVisitor):
                 else:
                     full_path = base
                 module_path, class_name = self._split_module_and_class(full_path)
-                if module_path and class_name and module_path.startswith(self.project_name):
-                    if not self.is_camel_case(class_name):
+                if module_path and class_name and module_path.startswith(self.module_name):
+                    if not self.is_class(module_path, class_name):
                         return None
                     return module_path, class_name
                 return None
         return None
+
+    def _is_constructor_call(self, func_node):
+        return self._resolve_class_from_name(func_node) is not None
 
     def _split_module_and_class(self, full_path):
         if not full_path or "." not in full_path:
@@ -428,9 +490,7 @@ class MethodFilter():
     
     def filter(self, caller, called_methods):
         return True
-
-
-
+    
 class MethodAnalyzer():
     def __init__(self, project_name: str, src_path: str, project_path: str):
         self.project_path = project_path
@@ -438,8 +498,8 @@ class MethodAnalyzer():
         self.project_name = project_name
         self.module_name = self.project_name
         self.package_root = os.path.dirname(project_path)
-        self.visitor = MethodCallVisitor(project_path, project_name, src_path)
-
+        all_classes, self.class_parent, self.function_testunit, function_variables = self._read_meta_info()
+        self.visitor = MethodCallVisitor(project_path, project_name, src_path, all_classes, self.class_parent, function_variables)
 
     def analyze_file(self, file_path) -> Tuple[Dict, Dict, Dict]:
         print(f"Analyzing file: {file_path}")
@@ -448,29 +508,76 @@ class MethodAnalyzer():
                 content = f.read()
         except Exception as e:
             print(f"Error reading file {file_path}: {e}")
-            return {}, {}, {}, {}
+            return {}, {}, {}
         visitor = self.visitor
         visitor.set_file_path(file_path, content)
         try:
             tree = ast.parse(content)
             visitor.visit(tree)
-            return visitor.method_calls, visitor.test_method_calls, visitor.method_definitions, visitor.caller_graph
+            return visitor.method_calls, visitor.test_method_calls, visitor.method_definitions
         except Exception as e:
             print(f"Error parsing {file_path}: {e}")
-            return {}, {}, {}, {}
+            return {}, {}, {}
+        
+    def _collect_family_classes(self, all_class_parent):
+        """
+        Return each class's inheritance family as sets of related classes.
+        """
+        family_classes = defaultdict(set)
 
+        class_graph = defaultdict(set)
 
-    def _combine_graph(self, old_graph, new_graph):
-        return_graph = {}
-        for k, v in old_graph.items():
-            if k in new_graph:
-                v.update(new_graph[k])
-            return_graph[k] = v
-                
-        for k, v in new_graph.items():
-            if k not in return_graph:
-                return_graph[k] = v
-        return return_graph
+        for class_key, parents in all_class_parent.items():
+            class_graph.setdefault(class_key, set())
+            for parent_key in parents:
+                class_graph.setdefault(parent_key, set())
+                class_graph[class_key].add(parent_key)
+                class_graph[parent_key].add(class_key)
+
+        visited = set()
+        for class_key in class_graph.keys():
+            if class_key in visited:
+                continue
+            component = set()
+            stack = [class_key]
+            while stack:
+                current = stack.pop()
+                if current in visited:
+                    continue
+                visited.add(current)
+                component.add(current)
+                for neighbor in class_graph[current]:
+                    if neighbor not in visited:
+                        stack.append(neighbor)
+
+            for comp_class in component:
+                family_classes[comp_class].update(component)
+
+        return family_classes
+    
+    def _read_meta_info(self):
+        testunit_file = os.path.join("output", self.project_name, f"function_testunit_mapping.json")
+        if not os.path.exists(testunit_file):
+            raise Exception("please first run `testunit_cover.py` to generate mapping file.")
+        with open(testunit_file, 'r', encoding='utf-8') as f:
+            meta_info = json.load(f)
+        all_classes = set()
+        all_class_parent = defaultdict(list)
+        for _, _cls in meta_info['classes'].items():
+            key = (_cls['module'], _cls['qualname'])
+            all_classes.add(key)
+            for module, parent_cls  in _cls['bases']:
+                all_class_parent[key].append((module, parent_cls))
+        
+        functions_info = meta_info['functions']
+        function_testunit = {}
+        function_variables = {}
+        for k, v in functions_info.items():
+            function_testunit[k] = v['tests']
+            function_variables[k] = v['variable_types']
+            
+        return all_classes, all_class_parent, function_testunit, function_variables
+        
 
     def find_refactor_codes(self) -> List[Tuple[Tuple[str, str, str], int, Dict]]:
         project_path = os.path.join(self.project_path, self.project_name)
@@ -486,6 +593,7 @@ class MethodAnalyzer():
         all_calls = {}
         all_definitions = {}
         all_test_calls = {}
+        all_class_parents = self.class_parent
         
         # 遍历所有Python文件
         for root, dirs, files in os.walk(project_path):
@@ -504,7 +612,7 @@ class MethodAnalyzer():
             for file in files:
                 if file.endswith('.py'):
                     try:
-                        calls, test_calls, definitions, caller_graph = self.analyze_file(os.path.join(root, file))
+                        calls, test_calls, definitions = self.analyze_file(os.path.join(root, file))
                         all_calls.update(calls)
                         all_definitions.update(definitions)
                         all_test_calls.update(test_calls)
@@ -513,9 +621,10 @@ class MethodAnalyzer():
                         print(f"Error processing {file}: {e}")
                         traceback.print_exc()
 
+        family_classes = self._collect_family_classes(all_class_parents)
 
-        # 按类组织方法调用信息 
-        class_methods = defaultdict(list)
+        # 按callee调用组织方法调用信息 
+        callee_mapping = defaultdict(list)
         ## all_calls的组织结构是，key=》caller，即谁调用了，value=》called_methods，即被调用的方法
         ## 这个called_methods可能不是当前class，甚至不是当前file内的，但要求必须是同一repo内的
         ## 整体来说，就是当前方法里调用了哪些方法
@@ -529,7 +638,7 @@ class MethodAnalyzer():
             # 统计方法调用次数
             for called_method, call_locations in called_methods.items():
                 called_module, called_class, called_method_name = called_method
-                class_methods[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
+                callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         result = []
         collectors: List[BaseCollector] = [
             LongMethodCollector(self.project_path, self.project_name, self.src_path), 
@@ -537,7 +646,11 @@ class MethodAnalyzer():
         ]
         refactored_count = 0
         for collector in collectors:
-            ret = collector.collect(class_methods, all_calls, all_definitions)
+            ret = collector.collect(callee_mapping, 
+                                    all_calls=all_calls, 
+                                    all_definitions=all_definitions, 
+                                    all_class_parents=all_class_parents,
+                                    family_classes=family_classes)
             refactored_count += len(ret)
             filtered_ret = []
             for r in ret:

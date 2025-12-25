@@ -832,10 +832,10 @@ class RefactorEvaluator:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="run/refactor_eval", help="Directory for cached outputs and reports.")
-    parser.add_argument("--model", default="qwen-turbo", help="Model name used for generation.")
+    parser.add_argument("--model", default=None, help="Model name used for generation.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
-    parser.add_argument("--client-type", default="gpt", choices=("gpt", "qwen"), help="LLM client backend defined in analyze_methods.client.")
+    parser.add_argument("--client-type", default=None, choices=("gpt", "qwen"), help="LLM client backend defined in analyze_methods.client.")
     parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature for the chat model.")
     parser.add_argument("--max-tokens", type=int, default=10000, help="Maximum tokens requested from the chat model.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")

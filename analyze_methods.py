@@ -3,10 +3,11 @@ from collections import defaultdict
 import os
 import re
 import sys
-import traceback
+
 from typing import Any, Dict, List, Tuple
 from analyzer import MethodAnalyzer
 import json
+import argparse
 
 def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
     """
@@ -39,7 +40,7 @@ def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
             code = caller_entry.get("code")
             if not module_path or code is None:
                 continue
-            relative_path = module_path.replace(".", os.sep) + "_" + caller_entry['method_name']+ ".py"
+            relative_path = module_path.replace(".", os.sep) + "_" + caller_entry['file_suffix']+ ".py"
             file_path = os.path.join(output_dir, relative_path)
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
@@ -50,36 +51,31 @@ def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
 
     return saved_files
 
-def main():
+def main(args):
     projects = {
         "urllib3": {
-            "project_path": "../project",
             "src_path": "src/urllib3"
         },
         "numpy": {
-            "project_path": "../project",
             "src_path": "numpy"
         },
         "requests": {
-            "project_path": "../project",
             "src_path": "src/requests"
         },
         "pydantic": {
-            "project_path": "../project",
             "src_path": "pydantic"
         },
         "click": {
-            "project_path": "../project",
             "src_path": "src/click"
         },
         "jinja": {
-            "project_path": "../project",
             "src_path": "src/jinja2"
         },
     }
-    project_name = "requests"
+    project_name = args.project_name
     src_path = projects[project_name]['src_path']
-    project_path = projects[project_name]['project_path']
+    project_path = args.project_dir
+    output_path = args.output_dir
     project_lib = f"{project_path}/{project_name}/{src_path}"
 
     print(f"Python version: {sys.version}")
@@ -93,7 +89,7 @@ def main():
     if not refactor_codes:
         print("No methods found or analysis failed")
         return
-    output_base = os.path.join('output', project_name)
+    output_base = os.path.join(output_path, project_name)
     os.makedirs(output_base, exist_ok=True)
     with open(os.path.join(output_base, 'refactor_codes.json'), 'w', encoding='utf-8') as f:
         settings = {
@@ -107,7 +103,15 @@ def main():
     caller_files_dir = os.path.join(output_base, 'caller_files')
     saved_files = save_caller_file_contents(refactor_codes, caller_files_dir)
     print(f"Saved {len(saved_files)} caller file copies to {caller_files_dir}")
-        
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
+    parser.add_argument("--output-dir", default="output", help="Directory for cached outputs and reports.")
+    parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
+    parser.add_argument("--project-name", default="click", help="Project name")
+    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)
