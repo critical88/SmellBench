@@ -9,9 +9,10 @@ import math
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import textwrap
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from client import LLMFactory, LLMClient
 from collections import defaultdict
@@ -31,6 +32,30 @@ DEFAULT_USER_INSTRUCTION = textwrap.dedent(
     Note you can't change the behavior of the original code, such as adding new class including caller method which breaks the original functionality.
     """
 ).strip()
+DUPLICATED_AGENT_PROMPT = textwrap.dedent(
+    """
+    You are given two Python code snippets extracted from different caller methods in the same repository. 
+These snippets contain duplicated or highly similar logic that should be refactored.
+
+Your task is to:
+1. Identify the duplicated code shared across the given caller methods.
+2. Extract this duplicated logic into a single reusable helper function.
+3. Search the current repository for other methods that contain similar duplicated logic and refactor them to reuse the same helper.
+4. Move the extracted helper function to an appropriate existing file or module in the repository (do not introduce unnecessary new files or classes).
+5. Update all affected caller methods to use the extracted helper function.
+
+Constraints:
+- You must not change the original program behavior.
+- Do not introduce new classes that contain the original caller methods.
+- The refactoring should preserve the original control flow, inputs, and outputs.
+- The helper function should be general enough to support all refactored callers.
+
+Carefully reason about code structure, duplication patterns, and file placement.
+
+You can do the replacements and summary the replacements in the Response block
+"""
+).strip()
+
 SYSTEM_PROMPT = (
     "You are an expert Python refactoring assistant. "
 )
@@ -172,22 +197,19 @@ def convert_to_segments(value: Any, fallback_label: str, text_fields: Sequence[s
     return segments
 
 
-def collect_code_blocks(value: Any) -> List[str]:
+def collect_code_blocks(case: Dict) -> List[str]:
+    value = case['before_refactor_code']
     blocks: List[str] = []
-    if isinstance(value, str):
-        snippet = value.strip("\n")
-        if snippet:
-            blocks.append(snippet)
-        return blocks
     for item in value:
-        blocks.append(f"`file:{item['module_path']}` and the related code is: \n```python\n{item['code']}\n```")
+        file_pos = item['position']
+        blocks.append(f"`module_path:{file_pos['module_path']}`, `class_name={file_pos['class_name']}`, `method_name={file_pos['method_name']}` and the related code is: \n```python\n{item['code']}\n```")
     return blocks
 
 
-def build_prompt(case: Dict[str, Any], instruction: str) -> str:
-    before_value = case['before_refactor_code']
-    code_sections = collect_code_blocks(before_value)
+def build_prompt(case: Dict[str, Any]) -> str:
+    code_sections = collect_code_blocks(case)
     code_blob = "\n\n".join(code_sections)
+    instruction = DUPLICATED_AGENT_PROMPT if case['type'] == 'DuplicatedMethod' else DEFAULT_USER_INSTRUCTION
     return PROMPT_TEMPLATE.format(
         system=SYSTEM_PROMPT,
         instructions=instruction.strip(),
@@ -641,24 +663,23 @@ class RefactorEvaluator:
         with open(self.data_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.project_path = os.path.join(args.project_dir)
+        self.project_root = Path(args.project_dir)
         self.project_name = args.project_name
+        self.project_repo = self.project_root / self.project_name
         self.cases = data['refactor_codes']
         self.settings = data['settings']
         self.src_path = self.settings['src_path']
         self.output_dir = Path(args.output_dir) / self.project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        if args.instruction_file:
-            instruction = Path(args.instruction_file).read_text(encoding="utf-8").strip()
-        elif args.instruction:
-            instruction = args.instruction.strip()
-        else:
-            instruction = DEFAULT_USER_INSTRUCTION
-        self.instruction = instruction
+        
         self.limit = args.limit
         self.verbose = args.verbose
+        self.use_code_agent = args.use_code_agent
+        self.code_agent_command = args.code_agent_command
         self.llm_client: Optional[LLMClient] = None
 
-        self.llm_client = LLMFactory.create_client(client_type=args.client_type)
+        if not self.use_code_agent:
+            self.llm_client = LLMFactory.create_client()
             
         self.results: List[CaseResult] = []
 
@@ -703,6 +724,222 @@ class RefactorEvaluator:
             break
         return caller_content
 
+    def _run_git_command(self, args: Sequence[str], check: bool = True) -> subprocess.CompletedProcess:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=self.project_repo,
+            text=True,
+            capture_output=True,
+        )
+        if check and result.returncode != 0:
+            raise RuntimeError(
+                f"Git command {' '.join(args)} failed with code {result.returncode}: {result.stderr.strip()}"
+            )
+        return result
+
+    def _module_relative_path(self, module_path: str) -> Path:
+        cleaned = (module_path or "").strip(".")
+        src_tail = Path(self.src_path).parts[-1] if Path(self.src_path).parts else self.src_path
+        if cleaned.startswith(f"{src_tail}."):
+            cleaned = cleaned[len(src_tail) + 1 :]
+        if not cleaned:
+            rel = Path("__init__.py")
+        else:
+            rel = Path(cleaned.replace(".", os.sep) + ".py")
+        return Path(self.src_path) / rel
+
+    def _write_ground_truth_files(self, case: Dict[str, Any]) -> List[str]:
+        written: List[str] = []
+        for file_entry in case.get("caller_file_content", []):
+            module_path = file_entry.get("module_path")
+            if not module_path:
+                continue
+            rel_path = self._module_relative_path(module_path)
+            abs_path = self.project_repo / rel_path
+            abs_path.parent.mkdir(parents=True, exist_ok=True)
+            abs_path.write_text(file_entry.get("code", ""), encoding="utf-8")
+            written.append(str(rel_path).replace("\\", "/"))
+        return written
+
+    def _has_staged_changes(self) -> bool:
+        result = self._run_git_command(["diff", "--cached", "--quiet"], check=False)
+        if result.returncode in (0, 1):
+            return result.returncode == 1
+        raise RuntimeError(f"Unexpected git diff --cached return code {result.returncode}")
+
+    def _invoke_code_agent(self, prompt: str) -> None:
+        command = shlex.split(self.code_agent_command)
+        process = subprocess.run(
+            command,
+            cwd=self.project_repo,
+            input=prompt,
+            text=True,
+            capture_output=True,
+        )
+        if process.stdout:
+            self._log(process.stdout.strip())
+        if process.stderr:
+            self._log(process.stderr.strip())
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"Code agent command {' '.join(command)} failed with code {process.returncode}"
+            )
+
+    def _cache_code_agent_diff(
+        self,
+        case_id: str,
+        prompt_hash: str,
+        diff_text: str,
+        diff_files: List[str],
+    ) -> None:
+        cache_dir = Path("cache")
+        cache_dir.mkdir(exist_ok=True)
+        payload = {
+            "case_id": case_id,
+            "prompt_hash": prompt_hash,
+            "project_name": self.project_name,
+            "diff_files": diff_files,
+            "diff": diff_text,
+        }
+        cache_path = cache_dir / f"code_agent_{self.project_name}_{case_id}.json"
+        cache_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _modules_from_paths(self, diff_files: List[str]) -> Set[str]:
+        modules: Set[str] = set()
+        src_root = Path(self.src_path)
+        base_module = src_root.parts[-1] if src_root.parts else src_root.name
+        for diff_file in diff_files:
+            rel_path = Path(diff_file.strip())
+            try:
+                relative = rel_path.relative_to(src_root)
+            except ValueError:
+                continue
+            module_name = ".".join([base_module] + list(relative.with_suffix("").parts))
+            modules.add(module_name)
+        return modules
+
+    def _match_function(self, target: Dict[str, Any], functions: List[FunctionSnippet]) -> Optional[FunctionSnippet]:
+        target_name = target.get("method_name")
+        if not target_name:
+            return None
+        target_class = target.get("class_name")
+        for fn in functions:
+            components = fn.name.split(".")
+            simple_name = components[-1]
+            if simple_name != target_name:
+                continue
+            if target_class:
+                if len(components) < 2 or components[-2] != target_class:
+                    continue
+            return fn
+        return None
+
+    def _build_prediction_from_repo(
+        self,
+        case: Dict[str, Any],
+        diff_files: List[str],
+        diff_text: str,
+    ) -> PredictionArtifacts:
+        changed_modules = self._modules_from_paths(diff_files)
+        target_lookup: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        for entry in case.get("before_refactor_code", []):
+            module_path = entry.get("module_path")
+            if module_path:
+                target_lookup[module_path].append(entry)
+        functions: List[FunctionSnippet] = []
+        caller_segments: List[Segment] = []
+        callee_segments: List[Segment] = []
+        for file_entry in case.get("caller_file_content", []):
+            module_path = file_entry.get("module_path")
+            if not module_path:
+                continue
+            if changed_modules and module_path not in changed_modules:
+                continue
+            rel_path = self._module_relative_path(module_path)
+            abs_path = self.project_repo / rel_path
+            if not abs_path.exists():
+                continue
+            after_code = abs_path.read_text(encoding="utf-8")
+            before_code = file_entry.get("code", "")
+            after_functions = _extract_functions_from_block(after_code)
+            before_functions = _extract_functions_from_block(before_code)
+            functions.extend(after_functions)
+            before_simple = {fn.name.split(".")[-1] for fn in before_functions}
+            target_entries = target_lookup.get(module_path, [])
+            target_names = {entry.get("method_name") for entry in target_entries}
+            for entry in target_entries:
+                match = self._match_function(entry, after_functions)
+                if match:
+                    meta = {
+                        "type": "caller",
+                        "position": {
+                            "module_path": module_path,
+                            "class_name": entry.get("class_name"),
+                            "method_name": entry.get("method_name"),
+                        },
+                        "callees": [],
+                    }
+                    caller_segments.append(Segment(text=match.source, meta=meta, name=match.name))
+            for fn in after_functions:
+                simple_name = fn.name.split(".")[-1]
+                if simple_name in target_names:
+                    continue
+                if simple_name in before_simple:
+                    continue
+                callee_segments.append(
+                    Segment(
+                        text=fn.source,
+                        meta={"type": "callee", "module_path": module_path},
+                        name=simple_name,
+                    )
+                )
+        return PredictionArtifacts(
+            functions=functions,
+            caller_segments=caller_segments,
+            callee_segments=callee_segments,
+            test_passed=None,
+            raw_response=diff_text,
+            parsed_payload={
+                "backend": "code_agent",
+                "changed_modules": sorted(changed_modules),
+            },
+        )
+
+    def _run_code_agent_workflow(
+        self,
+        case_id: str,
+        case: Dict[str, Any],
+        prompt: str,
+        prompt_hash: str,
+    ) -> Tuple[PredictionArtifacts, bool]:
+        original_head = self._run_git_command(["rev-parse", "HEAD"]).stdout.strip()
+        diff_text = ""
+        diff_files: List[str] = []
+        success = False
+        try:
+            self._run_git_command(["reset", "--hard", original_head])
+            written_files = self._write_ground_truth_files(case)
+            if written_files:
+                self._run_git_command(["add", *written_files])
+                if self._has_staged_changes():
+                    self._run_git_command(["commit", "-m", f"[baseline] {case_id}"])
+            self._invoke_code_agent(prompt)
+            diff_text = self._run_git_command(["diff"]).stdout
+            diff_output = self._run_git_command(["diff", "--name-only"]).stdout
+            diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
+            self._cache_code_agent_diff(case_id, prompt_hash, diff_text, diff_files)
+            prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
+            success = replace_and_test_caller(
+                self.project_name,
+                self.src_path,
+                case["testsuites"],
+                None,
+                self.project_path,
+            )
+        finally:
+            self._run_git_command(["reset", "--hard", original_head])
+        return prediction, success
+
     def run(self) -> Dict[str, Any]:
         total_cases = len(self.cases)
         self._log(f"Loaded {total_cases} cases from {self.data_path}")
@@ -724,12 +961,23 @@ class RefactorEvaluator:
         return summary
 
     def _process_case(self, case_id: str, case: Dict[str, Any]) -> CaseResult:
-        prompt = build_prompt(case, self.instruction)
+        prompt = build_prompt(case)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
-        
+
         ground_truth = parse_ground_truth(case)
-        payload = self._predict(prompt, prompt_hash, case_id, case)
-        prediction = parse_model_prediction(payload["response_text"], case)
+        if self.use_code_agent:
+            prediction, success = self._run_code_agent_workflow(case_id, case, prompt, prompt_hash)
+        else:
+            payload = self._predict(prompt, prompt_hash, case_id, case)
+            prediction = parse_model_prediction(payload["response_text"], case)
+            caller_content = self._extract_content(prediction.caller_segments, case)
+            success = replace_and_test_caller(
+                self.project_name,
+                self.src_path,
+                case['testsuites'],
+                caller_content,
+                self.project_path
+            )
         filtered_prediction_callees = filter_prediction_callees(prediction.callee_segments, ground_truth['local_callees'])
         callee_matches = match_segments(
             filtered_prediction_callees,
@@ -758,18 +1006,16 @@ class RefactorEvaluator:
 
             
 
-        caller_content = self._extract_content(caller_predictions, case)
-
-        success = replace_and_test_caller(self.project_name, self.src_path, case['testsuites'], caller_content, self.project_path)
         if len(callee_matches) == 0:
             match_scores = 0.0
-        else:  
+        else:
             match_scores = sum([round(item["score"], 3) for item in callee_matches]) / len(callee_matches)
         details = {
             "num_predicted_callees": len(filtered_prediction_callees),
             "num_target_callees": len(ground_truth["callees"]),
             "num_predicted_calls": len(caller_predictions),
             "callee_match_scores": match_scores,
+            "prediction_backend": "code_agent" if self.use_code_agent else "llm",
         }
         return CaseResult(
             case_id=case_id,
@@ -835,19 +1081,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="qwen-turbo", help="Model name used for generation.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
-    parser.add_argument("--client-type", default="gpt", choices=("gpt", "qwen"), help="LLM client backend defined in analyze_methods.client.")
     parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature for the chat model.")
     parser.add_argument("--max-tokens", type=int, default=10000, help="Maximum tokens requested from the chat model.")
+    parser.add_argument("--use-code-agent", action="store_true", help="Use code agent (Claude Code) instead of text-only LLM predictions.")
+    parser.add_argument("--code-agent-command", default="claude -p --permission-mode acceptEdits", help="Command used to invoke the code agent. The prompt is sent via stdin.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")
     parser.add_argument("--similarity-threshold", type=float, default=0.4, help="Similarity threshold used for F1 matching.")
-    parser.add_argument("--instruction-file", help="Optional file that overrides the default user instruction.")
-    parser.add_argument("--instruction", help="Inline instruction text overriding the default prompt instruction.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    args.use_code_agent = True
     evaluator = RefactorEvaluator(args)
     summary = evaluator.run()
     print(json.dumps(summary, indent=2, ensure_ascii=False))
