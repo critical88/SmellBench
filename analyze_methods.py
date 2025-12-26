@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Tuple
 from analyzer import MethodAnalyzer
 import json
 import argparse
+from testunits import process_refactoring
 
 def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
     """
@@ -84,11 +85,13 @@ def main(args):
     analyzer = MethodAnalyzer(project_name, src_path, project_path)
 
     
-    refactor_codes = analyzer.find_refactor_codes()
+    result = analyzer.find_refactor_codes()
     
-    if not refactor_codes:
+    if not result:
         print("No methods found or analysis failed")
         return
+    refactor_codes = result['refactor_codes']
+    
     output_base = os.path.join(output_path, project_name)
     os.makedirs(output_base, exist_ok=True)
     with open(os.path.join(output_base, 'refactor_codes.json'), 'w', encoding='utf-8') as f:
@@ -104,6 +107,11 @@ def main(args):
     saved_files = save_caller_file_contents(refactor_codes, caller_files_dir)
     print(f"Saved {len(saved_files)} caller file copies to {caller_files_dir}")
 
+    print("Start testunit to filter the illegal code")
+    passed_refactors = process_refactoring(project_name)
+    print(f"Number of refactor_codes: {result['stat']['raw_refacoter_num']}")
+    print(f"Number of refactors with testunits: {result['stat']['refactor_with_test_num']}")
+    print("Number of passed refactors:", len(passed_refactors))
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="output", help="Directory for cached outputs and reports.")

@@ -639,12 +639,14 @@ class MethodAnalyzer():
             for called_method, call_locations in called_methods.items():
                 called_module, called_class, called_method_name = called_method
                 callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
-        result = []
+        
         collectors: List[BaseCollector] = [
             LongMethodCollector(self.project_path, self.project_name, self.src_path), 
             DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path)
         ]
+        result = {}
         refactored_count = 0
+        refactor_codes = []
         for collector in collectors:
             ret = collector.collect(callee_mapping, 
                                     all_calls=all_calls, 
@@ -656,8 +658,12 @@ class MethodAnalyzer():
             for r in ret:
                 if len(r['testsuites']) > 0:
                     filtered_ret.append(r)
-            result.extend(filtered_ret)
-        print(f"number of refactor_codes: {refactored_count}")
-        print(f"number of refactor_codes with testunits: {len(result)}")
+            refactor_codes.extend(filtered_ret)
+        
+        result['refactor_codes'] = refactor_codes
+        result['stat'] = {
+            "raw_refacoter_num": refactored_count,
+            "refactor_with_test_num": len(refactor_codes)
+        }
         return result
 

@@ -10,9 +10,10 @@ repo_list: Dict[str, str] = {
     "numpy": "https://github.com/numpy/numpy.git",
     "requests": "https://github.com/psf/requests.git",
     "urllib3": "https://github.com/urllib3/urllib3.git",
+    "jinja": "https://github.com/pallets/jinja.git",
 }
 
-DEFAULT_PROJECT_DIR = Path(__file__).resolve().parents[1] / "project"
+DEFAULT_PROJECT_DIR = Path("../project")
 
 
 def clone_repos(project_dir: Path) -> None:
