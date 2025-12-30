@@ -334,10 +334,6 @@ class BaseCollector():
         return "\n".join(ast.unparse(stmt) for stmt in new_module.body)
 
     def _init_llm_client(self):
-        load_dotenv()
-
-        api_key = os.getenv('OPENAI_API_KEY')
-        base_url = os.getenv("OPENAI_BASE_URL")
         self.client = LLMFactory.create_client()
 
     def _find_related_testsuite(self, current_methods):
@@ -591,7 +587,7 @@ class BaseCollector():
         mutli_import = False
         for lineno, line in enumerate(caller_lines):
             ## if the line contains inline comment, we need to ignore the comment part
-            if not line.startswith("#") and "#" in line:
+            if not line.strip().startswith("#") and "#" in line:
                 line = line[:line.index("#")]
             if line.strip().startswith('"""'):
                 docstring = not docstring
@@ -609,7 +605,7 @@ class BaseCollector():
             if line.strip().startswith("from") and line.strip().endswith('('):
                 lines_without_import = 0
                 mutli_import = True
-            if line.strip().endswith(")"):
+            if mutli_import and line.strip().endswith(")"):
                 mutli_import = False
                 last_import_line = lineno
             if mutli_import:
@@ -809,7 +805,7 @@ Callee:
 
         ### deal callee
         # 获取方法的AST
-        method_ast = ast.parse(callee.get('source', '').strip()).body[0]
+        method_ast = ast.parse(textwrap.dedent(callee['source'])).body[0]
         decorators = callee.get("decorators")
         # 检查方法类型
         is_staticmethod = False

@@ -81,8 +81,8 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
 
     # Replace caller files
     for code_item in caller_file_content:
-        module_path = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
-        file_path = os.path.join(base_project_path, project_name, src_path, module_path.replace(".", os.sep) + ".py")
+        module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
+        file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
         success = replace_file_content(file_path, code_item.get('code', ''))
         if not success:
             print(f"Failed to replace file {file_path}")
@@ -138,7 +138,7 @@ def process_refactoring(project_name):
             "refactor_codes": successed_refactor_data
         }, f, indent=4)
     reset_repository(project_path)
-    return True
+    return successed_refactor_data
 
 
 def main(args):

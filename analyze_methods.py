@@ -3,6 +3,7 @@ from collections import defaultdict
 import os
 import re
 import sys
+import random
 
 from typing import Any, Dict, List, Tuple
 from analyzer import MethodAnalyzer
@@ -53,6 +54,7 @@ def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
     return saved_files
 
 def main(args):
+    random.seed(args.seed)
     projects = {
         "urllib3": {
             "src_path": "src/urllib3"
@@ -117,6 +119,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="output", help="Directory for cached outputs and reports.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
     return parser.parse_args()
 
 

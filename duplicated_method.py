@@ -1,11 +1,67 @@
 import ast
 import os
+import random
+
 from base_method import BaseCollector
 from collections import defaultdict
+import textwrap
+
+class _DocstringRemover(ast.NodeTransformer):
+    @staticmethod
+    def _remove_docstring(body):
+        if not body:
+            return body
+        first = body[0]
+        if isinstance(first, ast.Expr):
+            value = getattr(first, "value", None)
+            if isinstance(value, ast.Str):
+                return body[1:]
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return body[1:]
+        return body
+
+    def visit_FunctionDef(self, node):
+        self.generic_visit(node)
+        node.body = self._remove_docstring(node.body)
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        return self.visit_FunctionDef(node)
+
+    def visit_ClassDef(self, node):
+        self.generic_visit(node)
+        node.body = self._remove_docstring(node.body)
+        return node
+
+    def visit_Module(self, node):
+        self.generic_visit(node)
+        node.body = self._remove_docstring(node.body)
+        return node
+
 
 class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path) -> None:
         super().__init__(project_path, project_name, src_path)
+        self.remover = _DocstringRemover()
+
+    def _normalized_callee_length(self, source: str) -> int:
+        try:
+            tree = ast.parse(textwrap.dedent(source))
+            
+            tree = self.remover.visit(tree)
+            ast.fix_missing_locations(tree)
+            normalized = ast.unparse(tree)
+            normalized_lines = [
+                line for line in normalized.splitlines() if line.strip()
+            ]
+            return len(normalized_lines)
+        except Exception:
+            cleaned = []
+            for line in source.splitlines():
+                no_comment = line.split("#", 1)[0].strip()
+                if no_comment:
+                    cleaned.append(no_comment)
+            return len(cleaned)
     
     def collect(self, class_methods, all_calls, all_definitions, all_class_parents, family_classes):
         """
@@ -22,6 +78,8 @@ class DuplicatedMethodCollector(BaseCollector):
         TOTAL_CALLER_SIZE_THRESHOLD = 3
         # we discard the short callee, which is hard to recognize 
         CALLEE_MINIMAL_LEN = 5
+        # we only preserve 10 callers for one callee to avoid unnecessary overhead
+        MAX_CALLER_THRESHOLD = 10
         
         duplicated_methods = []
         # 遍历所有调用者方法
@@ -29,10 +87,12 @@ class DuplicatedMethodCollector(BaseCollector):
             if len(caller_methods) < TOTAL_CALLER_SIZE_THRESHOLD:
                 continue
             definition, modified_called_method = self._find_callee(callee_method, all_definitions, all_class_parents)
-            called_definition = all_definitions.get(callee_method)
+            callee_method = modified_called_method
+            called_definition = definition
             if not called_definition or not called_definition.get('source'):
                 continue
-            callee_lines = len(called_definition['source'].splitlines())
+            callee_lines = self._normalized_callee_length(called_definition['source'])
+            # unnormalized_callee_lines = len(called_definition['source'].splitlines())
             if callee_lines < CALLEE_MINIMAL_LEN:
                 continue
             callee_file = self.get_file_from_module(callee_method[0])
@@ -46,6 +106,9 @@ class DuplicatedMethodCollector(BaseCollector):
             valid_calling_times = 0
             
             caller_replacement_dict = defaultdict(dict)
+            selected_replacements = defaultdict(dict)
+            ## if one function is called over 10 times, then we randomly choose 10 callers to avoid resource waste. 
+            all_callers = []
             for caller_composite in caller_methods:
                 # ('urllib3.src.urllib3.contribopenssl', 'WrappedSocket', 'recv')
                 caller_method = caller_composite['position']
@@ -56,7 +119,6 @@ class DuplicatedMethodCollector(BaseCollector):
                 if not os.path.exists(caller_file):
                     continue
                 caller_method_definition = all_definitions.get(caller_method)
-                after_refactor = {"type": "caller", "code": caller_method_definition['source'], "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}
                 
                 replacements = []
                 # 获取被调用方法的定义
@@ -77,15 +139,30 @@ class DuplicatedMethodCollector(BaseCollector):
                     rel_end = caller_replacement['end'] - caller_method_definition['start_line'] + 1
                     caller_replacement['rel_start'] = rel_start
                     caller_replacement['rel_end'] = rel_end
-                    after_refactor['callees'].append({"type": "callee", "decorators": called_definition['decorators'], "start": caller_replacement['start'], "end": caller_replacement['end'], "code": called_definition['source'], 'position': callee['position']})
+                    
                     replacements.append(caller_replacement)
                 if len(replacements) == 0:
                     continue
                 caller_replacement_dict[caller_module][caller_method] = replacements
-                testsuites.update(self._find_related_testsuite(caller_method))
+                all_callers.append(caller_method)
+            ## only use selected refactor codes
+            if len(all_callers) > MAX_CALLER_THRESHOLD:
+                selected_callers = random.sample(all_callers, MAX_CALLER_THRESHOLD)
+            else:
+                selected_callers = all_callers
+            for caller_method in selected_callers:
+                caller_module = caller_method[0]
+                caller_method_definition = all_definitions.get(caller_method)
+                after_refactor = {"type": "caller", "code": caller_method_definition['source'], "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}
+                replacements = caller_replacement_dict[caller_module][caller_method]
+                for replacement in replacements:
+                    after_refactor['callees'].append({"type": "callee", "decorators": called_definition['decorators'], "start": replacement['start'], "end": replacement['end'], "code": called_definition['source'], 'position': callee['position']})
                 after_refactor_code.append(after_refactor)
+                selected_replacements[caller_module][caller_method] = replacements
                 valid_calling_times += len(replacements)
-            for caller_module, caller_replacements in caller_replacement_dict.items():
+                testsuites.update(self._find_related_testsuite(caller_method))
+
+            for caller_module, caller_replacements in selected_replacements.items():
 
                 before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module, all_definitions)
                 before_refactor_code.extend(before_refactors)
@@ -100,7 +177,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 continue
             duplicated_methods.append({
                 "type": "DuplicatedMethod",
-                "meta":{"calling_times": valid_calling_times, "callee_lines": callee_lines},
+                "meta":{"calling_times": valid_calling_times, "num_caller": len(selected_callers) , "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,

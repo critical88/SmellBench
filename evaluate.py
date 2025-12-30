@@ -201,8 +201,7 @@ def collect_code_blocks(case: Dict) -> List[str]:
     value = case['before_refactor_code']
     blocks: List[str] = []
     for item in value:
-        file_pos = item['position']
-        blocks.append(f"`module_path:{file_pos['module_path']}`, `class_name={file_pos['class_name']}`, `method_name={file_pos['method_name']}` and the related code is: \n```python\n{item['code']}\n```")
+        blocks.append(f"`module_path:{item['module_path']}`, `class_name={item['class_name']}`, `method_name={item['method_name']}` and the related code is: \n```python\n{item['code']}\n```")
     return blocks
 
 
@@ -769,6 +768,9 @@ class RefactorEvaluator:
 
     def _invoke_code_agent(self, prompt: str) -> None:
         command = shlex.split(self.code_agent_command)
+        import shutil
+        agent_cmd = shutil.which(command[0]).replace("/", os.sep)
+        command[0] = agent_cmd
         process = subprocess.run(
             command,
             cwd=self.project_repo,
@@ -946,11 +948,11 @@ class RefactorEvaluator:
         for index, case in enumerate(self.cases):
             if self.limit is not None and index >= self.limit:
                 break
-            if index == 0:
-                continue
             case_id = case_identifier(case, index)
             self._log(f"Processing {case_id}")
             result = self._process_case(case_id, case)
+            if result is None:
+                continue
             self.results.append(result)
         per_case_path = self.output_dir / "per_case_results.json"
         serialized = [dataclasses.asdict(result) for result in self.results]
@@ -961,6 +963,8 @@ class RefactorEvaluator:
         return summary
 
     def _process_case(self, case_id: str, case: Dict[str, Any]) -> CaseResult:
+        if case['type'] == 'LongMethod':
+            return
         prompt = build_prompt(case)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
 

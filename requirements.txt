@@ -12,3 +12,5 @@ trio
 quart
 quart_trio
 pytest-timeout
+# pydantic-1,0
+pytest-mock
