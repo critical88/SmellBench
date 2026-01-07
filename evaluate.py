@@ -859,7 +859,7 @@ class RefactorEvaluator:
         raise RuntimeError(f"Unexpected git diff --cached return code {result.returncode}")
 
     def _invoke_code_agent(self, prompt: str) -> None:
-        command = shlex.split(self.code_agent_command)
+        command = shlex.split(self.code_agent_command, posix=False)
         import shutil
         agent_cmd = shutil.which(command[0]).replace("/", os.sep)
         command[0] = agent_cmd
