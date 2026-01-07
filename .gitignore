@@ -6,3 +6,4 @@ cache/
 run/refactor_eval
 *.out
 .env
+*.diff
