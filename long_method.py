@@ -22,6 +22,8 @@ class LongMethodCollector(BaseCollector):
         """
         # 设置被调用方法总长度的阈值（行数）
         TOTAL_CALLEE_LENGTH_THRESHOLD = 20
+
+        MINIMAL_CALLEE_NUM = 2
         
         long_methods = []
         
@@ -35,15 +37,24 @@ class LongMethodCollector(BaseCollector):
             # 统计该调用者调用的所有方法的总行数
             before_refactor_code = []
             caller_method_definition = all_definitions.get(caller_method)
-            after_refactor_code = [{"type": "caller", "code": caller_method_definition['source'], "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}]
+            caller_source = caller_method_definition['source']
+            caller_len = self._normalized_function_length(caller_source)
+            if caller_len < 5:
+                continue
+
+            after_refactor_code = [{"type": "caller", "code": caller_source, "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}]
             replacements = []
             for called_method, caller_locations in callee_methods.items():
                 # 获取被调用方法, 由于存在重载问题， 需要进行多次查找
                 definition, modified_called_method = self._find_callee(called_method, all_definitions, all_class_parents)
                 if definition is None:
                     continue
+                callee_source = definition['source']
+                callee_len = self._normalized_function_length(callee_source)
+                if callee_len < 5:
+                    continue
                 callee_file = self.get_file_from_module(modified_called_method[0])
-                callee = {"source": definition['source'], 'decorators': definition['decorators'], "file": callee_file }
+                callee = {"source": callee_source, 'decorators': definition['decorators'], "file": callee_file }
                 callee['position'] = {"module_path": modified_called_method[0], "class_name": modified_called_method[1], "method_name": modified_called_method[2]}
                 for caller_location in caller_locations:
                     caller = caller_location
@@ -63,7 +74,7 @@ class LongMethodCollector(BaseCollector):
                     caller_replacement['rel_end'] = rel_end
                     after_refactor_code[0]['callees'].append({"type": "callee", "decorators": definition['decorators'], "start": caller_replacement['start'], "end": caller_replacement['end'], "code": definition['source'], 'position': callee['position']})
                     replacements.append(caller_replacement)
-            if len(replacements) == 0:
+            if len(replacements) < MINIMAL_CALLEE_NUM:
                 continue
             replacement_dict = {
                 caller_method: replacements

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 import ast
-import contextlib
+
 import json
 import os
 import sys
@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set
 import subprocess
+from utils import pushd
 
 try:
     import coverage  # type: ignore
@@ -824,15 +825,7 @@ class CoverageContextPlugin:
         self.coverage.switch_context("pytest:idle")
 
 
-@contextlib.contextmanager
-def pushd(path: Path):
-    """Temporarily change directories."""
-    previous = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
+
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:

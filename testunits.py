@@ -2,13 +2,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
-import contextlib
 import argparse
+from utils import pushd
 
-def reset_repository(repo_path):
+def reset_repository(repo_path, commit_hash=None):
     """Reset the git repository to its latest state"""
     try:
-        subprocess.run(['git', 'reset', '--hard', 'HEAD'], cwd=repo_path, check=True)
+        commit_hash = 'HEAD' if commit_hash is None else commit_hash
+        subprocess.run(['git', 'reset', '--hard', commit_hash], cwd=repo_path, check=True)
         # subprocess.run(['git', 'clean', '-fd'], cwd=repo_path, check=True)
         return True
     except subprocess.CalledProcessError:
@@ -26,15 +27,6 @@ def replace_file_content(file_path, new_content):
         print(f"Error replacing file {file_path}: {e}")
         return False
     
-@contextlib.contextmanager
-def pushd(path: Path):
-    """Temporarily change directories."""
-    previous = Path.cwd()
-    os.chdir(path)
-    try:
-        yield
-    finally:
-        os.chdir(previous)
 def run_project_tests(project_path, src_path, test_file_paths):
     """Run the project's test suite"""
     
@@ -53,7 +45,7 @@ def run_project_tests(project_path, src_path, test_file_paths):
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content, poject_dir="../project"):
+def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content, poject_dir="../project", commit_hash=None):
     # Define paths
     base_project_path = poject_dir
     module_path = os.path.normpath(src_path).split(os.sep)[-1]
@@ -64,7 +56,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
         return False
 
     # Reset repository
-    if not reset_repository(project_path):
+    if not reset_repository(project_path, commit_hash):
         print(f"Project reset failed")
         return False
 
@@ -80,13 +72,14 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
     #         return False
 
     # Replace caller files
-    for code_item in caller_file_content:
-        module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
-        file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
-        success = replace_file_content(file_path, code_item.get('code', ''))
-        if not success:
-            print(f"Failed to replace file {file_path}")
-            return False
+    if caller_file_content is not None:
+        for code_item in caller_file_content:
+            module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
+            file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
+            success = replace_file_content(file_path, code_item.get('code', ''))
+            if not success:
+                print(f"Failed to replace file {file_path}")
+                return False
 
     # Run tests
     success, output = run_project_tests(project_path, src_path, test_file_paths)

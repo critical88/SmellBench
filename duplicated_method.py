@@ -5,63 +5,13 @@ import random
 from base_method import BaseCollector
 from collections import defaultdict
 import textwrap
-
-class _DocstringRemover(ast.NodeTransformer):
-    @staticmethod
-    def _remove_docstring(body):
-        if not body:
-            return body
-        first = body[0]
-        if isinstance(first, ast.Expr):
-            value = getattr(first, "value", None)
-            if isinstance(value, ast.Str):
-                return body[1:]
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                return body[1:]
-        return body
-
-    def visit_FunctionDef(self, node):
-        self.generic_visit(node)
-        node.body = self._remove_docstring(node.body)
-        return node
-
-    def visit_AsyncFunctionDef(self, node):
-        return self.visit_FunctionDef(node)
-
-    def visit_ClassDef(self, node):
-        self.generic_visit(node)
-        node.body = self._remove_docstring(node.body)
-        return node
-
-    def visit_Module(self, node):
-        self.generic_visit(node)
-        node.body = self._remove_docstring(node.body)
-        return node
+from utils import strip_python_comments
 
 
 class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path) -> None:
         super().__init__(project_path, project_name, src_path)
-        self.remover = _DocstringRemover()
 
-    def _normalized_callee_length(self, source: str) -> int:
-        try:
-            tree = ast.parse(textwrap.dedent(source))
-            
-            tree = self.remover.visit(tree)
-            ast.fix_missing_locations(tree)
-            normalized = ast.unparse(tree)
-            normalized_lines = [
-                line for line in normalized.splitlines() if line.strip()
-            ]
-            return len(normalized_lines)
-        except Exception:
-            cleaned = []
-            for line in source.splitlines():
-                no_comment = line.split("#", 1)[0].strip()
-                if no_comment:
-                    cleaned.append(no_comment)
-            return len(cleaned)
     
     def collect(self, class_methods, all_calls, all_definitions, all_class_parents, family_classes):
         """
@@ -91,7 +41,7 @@ class DuplicatedMethodCollector(BaseCollector):
             called_definition = definition
             if not called_definition or not called_definition.get('source'):
                 continue
-            callee_lines = self._normalized_callee_length(called_definition['source'])
+            callee_lines = self._normalized_function_length(called_definition['source'])
             # unnormalized_callee_lines = len(called_definition['source'].splitlines())
             if callee_lines < CALLEE_MINIMAL_LEN:
                 continue

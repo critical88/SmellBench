@@ -1,8 +1,11 @@
-pytest
+pytest==7.4
 coverage
 dotenv
 openai
 dashscope
+unidiff
+CodeBLEU
+tree-sitter-python==0.20.1
 # requests
 pytest-httpbin
 PySocks
@@ -12,5 +15,8 @@ trio
 quart
 quart_trio
 pytest-timeout
-# pydantic-1,0
+# pydantic-1.0
 pytest-mock
+pytest-benchmark
+hypothesis
+pydantic[email]

@@ -6,6 +6,7 @@ from client import LLMFactory
 from dotenv import load_dotenv
 from typing import Dict, List, Tuple
 import textwrap
+from utils import strip_python_comments
 
 
 class BaseCollector():
@@ -182,7 +183,7 @@ class BaseCollector():
                 return True
         return False
 
-    def _process_statement(self, stmt, return_var: str | None, existing_names, loop_flag=None, extra_flags=None):
+    def _process_statement(self, stmt, return_var: str | None, existing_names, loop_flag=None, extra_flags=None, in_loop_body=False):
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
             return [stmt], None
         if isinstance(stmt, ast.Return):
@@ -193,7 +194,7 @@ class BaseCollector():
                 flag_names.extend(extra_flags)
             nodes = self._build_return_nodes(stmt, flag_names if flag_names else None, return_var)
             info = {'has_return': True, 'type': 'return'}
-            if loop_flag:
+            if loop_flag and in_loop_body:
                 nodes.append(ast.Break())
                 info['loop_flag'] = loop_flag
             return nodes, info
@@ -215,8 +216,8 @@ class BaseCollector():
                     body_flags = extra_flags + [flag_name]
                 else:
                     body_flags = [flag_name]
-            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, body_flags)
-            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, body_flags if needs_if_flag else extra_flags)
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, body_flags, in_loop_body=in_loop_body)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, body_flags if needs_if_flag else extra_flags, in_loop_body=in_loop_body)
             has_return = (body_info and body_info.get('has_return')) or (orelse_info and orelse_info.get('has_return'))
             info = None
             if has_return:
@@ -239,8 +240,8 @@ class BaseCollector():
                     targets=[ast.Name(id=loop_flag_name, ctx=ast.Store())],
                     value=ast.Constant(value=False)
                 )
-            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag_name, extra_flags)
-            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag_name, extra_flags)
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag_name, extra_flags, in_loop_body=True)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag_name, extra_flags, in_loop_body=False)
             has_return = (body_info and body_info.get('has_return')) or (orelse_info and orelse_info.get('has_return'))
             if needs_flag and loop_flag_name:
                 stmt.body.append(
@@ -256,17 +257,17 @@ class BaseCollector():
                 statements = [flag_assign, stmt]
             return statements, info
         if isinstance(stmt, (ast.With, ast.AsyncWith)):
-            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags)
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
             has_return = body_info and body_info.get('has_return')
             info = {'has_return': True} if has_return else None
             return [stmt], info
         if isinstance(stmt, ast.Try):
-            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags)
-            stmt.finalbody, final_info = self._process_block_with_returns(stmt.finalbody, return_var, existing_names, loop_flag, extra_flags)
-            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, extra_flags)
+            stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
+            stmt.finalbody, final_info = self._process_block_with_returns(stmt.finalbody, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
+            stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
             handler_return = False
             for handler in stmt.handlers:
-                handler.body, handler_info = self._process_block_with_returns(handler.body, return_var, existing_names, loop_flag, extra_flags)
+                handler.body, handler_info = self._process_block_with_returns(handler.body, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
                 if handler_info and handler_info.get('has_return'):
                     handler_return = True
             has_return = (body_info and body_info.get('has_return')) or \
@@ -277,23 +278,28 @@ class BaseCollector():
         if hasattr(ast, "Match") and isinstance(stmt, ast.Match):
             case_return = False
             for case in stmt.cases:
-                case.body, case_info = self._process_block_with_returns(case.body, return_var, existing_names, loop_flag, extra_flags)
+                case.body, case_info = self._process_block_with_returns(case.body, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
                 if case_info and case_info.get('has_return'):
                     case_return = True
             info = {'has_return': True, 'type': 'match'} if case_return else None
             return [stmt], info
         return [stmt], None
-
-    def _process_block_with_returns(self, statements, return_var: str | None, existing_names, loop_flag=None, extra_flags=None):
+    def _normalized_function_length(self, source: str) -> int:
+        text = strip_python_comments(source)
+        normalized_lines = [
+                line for line in text.splitlines() if line.strip()
+        ]
+        return len(normalized_lines)
+    def _process_block_with_returns(self, statements, return_var: str | None, existing_names, loop_flag=None, extra_flags=None, in_loop_body=False):
         new_statements = []
         idx = 0
         while idx < len(statements):
             stmt = statements[idx]
-            transformed, info = self._process_statement(stmt, return_var, existing_names, loop_flag, extra_flags)
+            transformed, info = self._process_statement(stmt, return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body)
             new_statements.extend(transformed)
             if info and info.get('has_return'):
                 remaining, _ = self._process_block_with_returns(
-                    statements[idx + 1:], return_var, existing_names, loop_flag, extra_flags
+                    statements[idx + 1:], return_var, existing_names, loop_flag, extra_flags, in_loop_body=in_loop_body
                 )
                 if info.get('type') == 'if':
                     if info.get('uses_flag'):
@@ -902,7 +908,6 @@ Callee:
             # 解析整个表达式
             try:
                 expr_ast = ast.parse(call_line)
-                
             except Exception as e:
                 print(f"Error parsing call: {e}")
                 return None

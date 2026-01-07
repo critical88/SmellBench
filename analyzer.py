@@ -4,9 +4,12 @@ from collections import defaultdict
 from typing import Dict, Set, Tuple, List
 from long_method import LongMethodCollector
 from duplicated_method import DuplicatedMethodCollector
+from overloaded_method import OverloadedMethodCollector
 from base_method import BaseCollector
 import json
 import traceback
+import subprocess
+from utils import pushd
 
 class MethodCallVisitor(ast.NodeVisitor):
     def __init__(self, 
@@ -496,7 +499,7 @@ class MethodAnalyzer():
         self.project_path = project_path
         self.src_path = src_path
         self.project_name = project_name
-        self.module_name = self.project_name
+        self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.package_root = os.path.dirname(project_path)
         all_classes, self.class_parent, self.function_testunit, function_variables = self._read_meta_info()
         self.visitor = MethodCallVisitor(project_path, project_name, src_path, all_classes, self.class_parent, function_variables)
@@ -641,12 +644,16 @@ class MethodAnalyzer():
                 callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         
         collectors: List[BaseCollector] = [
-            LongMethodCollector(self.project_path, self.project_name, self.src_path), 
-            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path)
+            LongMethodCollector(self.project_path, self.project_name, self.src_path),
+            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path),
+            # OverloadedMethodCollector(self.project_path, self.project_name, self.src_path)
         ]
         result = {}
         refactored_count = 0
         refactor_codes = []
+        with pushd(os.path.join(self.project_path, self.project_name)):
+            commit_hash = subprocess.run(['git', "rev-parse", "HEAD"], text=True, cwd=".", capture_output=True, check=True).stdout.strip()
+
         for collector in collectors:
             ret = collector.collect(callee_mapping, 
                                     all_calls=all_calls, 
@@ -657,6 +664,7 @@ class MethodAnalyzer():
             filtered_ret = []
             for r in ret:
                 if len(r['testsuites']) > 0:
+                    r['commit_hash'] = commit_hash
                     filtered_ret.append(r)
             refactor_codes.extend(filtered_ret)
         
