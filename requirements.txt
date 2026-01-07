@@ -5,7 +5,7 @@ openai
 dashscope
 unidiff
 CodeBLEU
-tree-sitter-python==0.23.6
+tree-sitter-python==0.21.0
 # requests
 pytest-httpbin
 PySocks
