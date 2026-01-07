@@ -46,7 +46,6 @@ class LLMClient(ABC):
     def chat(self, 
             prompt: str,
             model: Optional[str] = None,
-            max_tokens: int = 1000,
             temperature: float = 0.7
             ) -> LLMResponse:
         """Send a chat request to the LLM"""
@@ -59,7 +58,7 @@ class LLMClient(ABC):
         self.times += 1
         print(f"调用次数: {self.times}")
         
-        response = self._chat(prompt, model, max_tokens, temperature)
+        response = self._chat(prompt, model, temperature)
         self.cache[key] = response.content
         self.save_cache(model)
         return response.content
@@ -68,7 +67,6 @@ class LLMClient(ABC):
     def _chat(self, 
             prompt: str,
             model: Optional[str] = None,
-            max_tokens: int = 1000,
             temperature: float = 0.7
             ) -> LLMResponse:
         pass
@@ -86,14 +84,12 @@ class GPTClient(LLMClient):
     def _chat(self,
              prompt: str,
              model: Optional[str] = None,
-             max_tokens: int = 1000,
              temperature: float = 0.7
              ) -> LLMResponse:
         try:
             response = self.client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=max_tokens,
                 temperature=temperature
             )
             return LLMResponse(
@@ -122,7 +118,6 @@ class QwenClient(LLMClient):
     def _chat(self,
              prompt: str,
              model: Optional[str] = None,
-             max_tokens: int = 1000,
              temperature: float = 0.7
              ) -> LLMResponse:
         from dashscope import Generation
@@ -130,7 +125,6 @@ class QwenClient(LLMClient):
             response = Generation.call(
                 model=model,
                 prompt=prompt,
-                max_tokens=max_tokens,
                 temperature=temperature,
                 result_format='text'
             )
