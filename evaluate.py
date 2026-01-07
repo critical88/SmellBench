@@ -1547,7 +1547,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="claude_code", help="Model name used for generation.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
-    parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature for the chat model.")
+    parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--use-code-agent", action="store_true", help="Use code agent (Claude Code) instead of text-only LLM predictions.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")
     parser.add_argument("--similarity-threshold", type=float, default=0.4, help="Similarity threshold used for F1 matching.")

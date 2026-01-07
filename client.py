@@ -1,20 +1,21 @@
 from hashlib import md5
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from openai import OpenAI
 from dataclasses import dataclass
 import json
 from dotenv import load_dotenv
 @dataclass
 class LLMResponse:
-    """LLM响应的数据类"""
     content: str
     model: str
     raw_response: Any
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 class LLMClient(ABC):
-    """LLM客户端基类"""
     
     def __init__(self, api_key: str, base_url: str, model: str):
         self.api_key = api_key
@@ -23,6 +24,12 @@ class LLMClient(ABC):
         self._initialize_client()
         self.times = 0
         self.cache = {}
+        self.prompt_token_usage = 0
+        self.completion_token_usage = 0
+        self.total_token_usage = 0
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_total_tokens = 0
         
     
     def load_cache(self, model):
@@ -53,13 +60,23 @@ class LLMClient(ABC):
         key = md5(prompt.encode('utf-8')).hexdigest()
         self.load_cache(model)
         if key in self.cache:
-            return self.cache[key]
+            self._reset_last_usage()
+            cache = self.cache[key]
+            if isinstance(cache, str):
+                return cache
+            return cache['content']
         
         self.times += 1
-        print(f"调用次数: {self.times}")
+        print(f"API calling times: {self.times}")
         
         response = self._chat(prompt, model, temperature)
-        self.cache[key] = response.content
+        self._record_token_usage(response)
+        self.cache[key] = {
+            'content': response.content,
+            'prompt_tokens': response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens
+        }
         self.save_cache(model)
         return response.content
         
@@ -70,10 +87,84 @@ class LLMClient(ABC):
             temperature: float = 0.7
             ) -> LLMResponse:
         pass
-
-class GPTClient(LLMClient):
-    """OpenAI GPT客户端实现"""
     
+    def _reset_last_usage(self) -> None:
+        self.last_prompt_tokens = 0
+        self.last_completion_tokens = 0
+        self.last_total_tokens = 0
+
+    def _record_token_usage(self, response: LLMResponse) -> None:
+        prompt_tokens = response.prompt_tokens or 0
+        completion_tokens = response.completion_tokens or 0
+        total_tokens = response.total_tokens or (prompt_tokens + completion_tokens)
+        self.last_prompt_tokens = prompt_tokens
+        self.last_completion_tokens = completion_tokens
+        self.last_total_tokens = total_tokens
+        self.prompt_token_usage += prompt_tokens
+        self.completion_token_usage += completion_tokens
+        self.total_token_usage += total_tokens
+
+    def _extract_usage_from_response(self, raw_response: Any) -> Tuple[int, int, int]:
+        usage = getattr(raw_response, "usage", None)
+        if usage is None and isinstance(raw_response, dict):
+            usage = usage or raw_response.get("usage")
+
+        def _value(container: Any, name: str) -> int:
+            if container is None:
+                return 0
+            result = None
+            if isinstance(container, dict):
+                result = container.get(name)
+            else:
+                result = getattr(container, name, None)
+            if result is None:
+                return 0
+            try:
+                return int(result)
+            except (TypeError, ValueError):
+                return 0
+
+        prompt_tokens = _value(usage, "prompt_tokens")
+        completion_tokens = _value(usage, "completion_tokens")
+        total_tokens = _value(usage, "total_tokens")
+        if prompt_tokens == 0:
+            prompt_tokens = _value(usage, "input_tokens")
+        if completion_tokens == 0:
+            completion_tokens = _value(usage, "output_tokens")
+        if total_tokens == 0 and (prompt_tokens or completion_tokens):
+            total_tokens = prompt_tokens + completion_tokens
+        return prompt_tokens, completion_tokens, total_tokens
+class AntClient(LLMClient):
+    
+    def _initialize_client(self) -> None:
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url
+        )
+    
+    def _chat(self,
+             prompt: str,
+             model: Optional[str] = None,
+             temperature: float = 0.7
+             ) -> LLMResponse:
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            prompt_tokens, completion_tokens, total_tokens = self._extract_usage_from_response(response)
+            return LLMResponse(
+                content=response.choices[0].message.content,
+                model=model,
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+            )
+        except Exception as e:
+            raise Exception(f"ANT API calling error: {str(e)}")
+        
+class GPTClient(LLMClient):
     
     def _initialize_client(self) -> None:
         self.client = OpenAI(
@@ -92,20 +183,20 @@ class GPTClient(LLMClient):
                 messages=[{"role": "user", "content": prompt}],
                 temperature=temperature
             )
+            prompt_tokens, completion_tokens, total_tokens = self._extract_usage_from_response(response)
             return LLMResponse(
                 content=response.choices[0].message.content,
                 model=model or self.DEFAULT_MODEL,
-                raw_response=response
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
             )
         except Exception as e:
-            raise Exception(f"GPT API调用错误: {str(e)}")
+            raise Exception(f"ANT API calling error: {str(e)}")
 
 class QwenClient(LLMClient):
-    """Qwen(千问)客户端实现"""
-    
     def _initialize_client(self) -> None:
-        # 在这里初始化千问的API客户端
-        # 由于千问也支持OpenAI兼容格式，我们使用OpenAI客户端
         import dashscope
         
         if dashscope is None:
@@ -129,16 +220,19 @@ class QwenClient(LLMClient):
                 result_format='text'
             )
             content = response.output.text
+            prompt_tokens, completion_tokens, total_tokens = self._extract_usage_from_response(response)
             return LLMResponse(
                 content=content,
                 model=model,
-                raw_response=response
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
             )
         except Exception as e:
-            raise Exception(f"千问 API调用错误: {str(e)}")
+            raise Exception(f"Qwen API calling error: {str(e)}")
 
 class LLMFactory:
-    """LLM客户端工厂类"""
     
     @staticmethod
     def create_client(client_type: str = None, api_key: str = None, base_url: str = None, model: str = None) -> LLMClient:
@@ -165,44 +259,36 @@ class LLMFactory:
             api_key = api_key or os.getenv('QWEN_API_KEY')  
             model = os.getenv('QWEN_MODEL')
             return QwenClient(api_key=api_key, base_url=base_url, model=model)
+        elif client_type.lower() == "ant":
+            api_key = api_key or os.getenv('ANT_API_KEY')
+            base_url = base_url or os.getenv('ANT_BASE_URL')
+            model = os.getenv('ANT_MODEL')
+            return AntClient(api_key=api_key, base_url=base_url, model=model)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 
-# 使用示例
 def main():
-    # 从环境变量获取API密钥
     api_key = os.getenv('OPENAI_API_KEY', 'sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b')
     
-    # 创建GPT客户端
     gpt_client = LLMFactory.create_client(
         'gpt',
         api_key=api_key,
         base_url="https://api2.mygptlife.com/v1"
     )
     
-    # # 创建千问客户端
     # qwen_client = LLMFactory.create_client(
     #     'qwen',
     #     api_key=api_key,
     #     base_url="https://your-qianwen-api-endpoint.com/v1"
     # )
     
-    # 测试提示词
-    prompt = "请用中文解释什么是Python装饰器？"
+    prompt = "what is the decorator in python, use chinese "
     
-    # 使用GPT进行对话
     try:
         gpt_response = gpt_client.chat(prompt)
-        print(f"GPT的回答:\n{gpt_response.content}\n")
+        print(f"GPT answer:\n{gpt_response.content}\n")
     except Exception as e:
-        print(f"GPT调用失败: {str(e)}")
-    
-    # 使用千问进行对话
-    # try:
-    #     qwen_response = qwen_client.chat(prompt)
-    #     print(f"千问的回答:\n{qwen_response.content}")
-    # except Exception as e:
-    #     print(f"千问调用失败: {str(e)}")
+        print(f"GPT error: {str(e)}")
 
 if __name__ == "__main__":
     main()
