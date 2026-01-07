@@ -43,26 +43,29 @@ def clone_repos(project_dir: Path) -> None:
         commit_id = item['commit_id']
         repo_path = project_dir / name
         if repo_path.exists():
-            print(f"[skip] {name}: {repo_path} 已存在，跳过")
-            continue
-
-        print(f"[clone] {name}: {url} -> {repo_path}")
+            print(f"[skip] {name}: {repo_path} already exists")
+        else:
+            print(f"[clone] {name}: {url} -> {repo_path}")
+            try:
+                subprocess.run(["git", "clone", url, str(repo_path)], check=True)
+            except subprocess.CalledProcessError as exc:
+                print(f"[error] {name} failed to clone: {exc}")
+        
         try:
-            subprocess.run(["git", "clone", url, str(repo_path)], check=True)
-            subprocess.run(["git", "checkout", commit_id], cwd=name, check=True)
+            subprocess.run(["git", "checkout", commit_id], cwd=str(repo_path.absolute()), check=True)
         except subprocess.CalledProcessError as exc:
-            print(f"[error] {name} 克隆失败: {exc}")
+            print(f"[error] checkout failed")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="克隆 repo_list 中列出的仓库到 project 目录（默认在项目根目录下）"
+        description="clone repo from repo list into project dir"
     )
     parser.add_argument(
         "--dest",
         type=Path,
         default=DEFAULT_PROJECT_DIR,
-        help="自定义克隆目标目录（默认使用仓库根目录下的 project）",
+        help="default is `project`, the path that git clone into",
     )
     args = parser.parse_args()
     clone_repos(args.dest.expanduser().resolve())
