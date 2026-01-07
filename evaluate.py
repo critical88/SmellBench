@@ -14,7 +14,7 @@ import textwrap
 from codebleu import calc_codebleu
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from client import LLMFactory, LLMClient
+from client import LLMFactory, LLMClient, create_agent_command
 from collections import defaultdict
 from testunits import replace_and_test_caller, run_project_tests
 from utils import strip_python_comments
@@ -24,12 +24,8 @@ except ImportError:
     PatchSet = None  # type: ignore[assignment]
 
 
-
 CODE_TEXT_FIELDS = ["code", "source", "body", "text", "snippet"]
 
-CODE_AGENT_COMMAND_MAPPING = {
-    "claude_code": "claude -p --permission-mode acceptEdits --disallowedTools 'Bash(git:*)'"
-}
 DEFAULT_USER_INSTRUCTION = textwrap.dedent(
     """
     You are given one or more Python code snippets that include at least one caller method that can be refactored.
@@ -759,10 +755,7 @@ class RefactorEvaluator:
         self.verbose = args.verbose
         self.use_code_agent = args.use_code_agent
         self.model = args.model
-        if args.model in CODE_AGENT_COMMAND_MAPPING:
-            self.code_agent_command = CODE_AGENT_COMMAND_MAPPING[args.model] 
-        else:
-            self.code_agent_command = None
+        self.code_agent_command = create_agent_command(self.model)
         self.llm_client: Optional[LLMClient] = None
 
         if not self.use_code_agent:

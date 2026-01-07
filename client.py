@@ -6,6 +6,24 @@ from openai import OpenAI
 from dataclasses import dataclass
 import json
 from dotenv import load_dotenv
+
+
+CODE_AGENT_COMMAND_MAPPING = {
+    "claude_code": "claude -p --model '{model}' --permission-mode acceptEdits --disallowedTools 'Bash(git:*)'"
+}
+
+
+def create_agent_command(model):
+    from dotenv import load_dotenv
+    load_dotenv()
+    if model in CODE_AGENT_COMMAND_MAPPING:
+        command = CODE_AGENT_COMMAND_MAPPING[model]
+        if model == "claude_code":
+            claude_model = os.getenv('CLAUDE_MODEL')
+            command = command.format(model=claude_model)
+        return command
+    return None
+
 @dataclass
 class LLMResponse:
     content: str
@@ -14,7 +32,6 @@ class LLMResponse:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
-
 class LLMClient(ABC):
     
     def __init__(self, api_key: str, base_url: str, model: str):
