@@ -9,7 +9,9 @@ from dotenv import load_dotenv
 
 
 CODE_AGENT_COMMAND_MAPPING = {
-    "claude_code": "claude -p --model '{model}' --permission-mode acceptEdits --disallowedTools 'Bash(git:*)'"
+    # --disallowedTools 'Bash(git:*)'
+    "claude_code": "claude -p --model {model} --permission-mode acceptEdits",
+    "qwen_code": "qwen -p --model {model} --approval-mode auto-edit",
 }
 
 
@@ -21,6 +23,9 @@ def create_agent_command(model):
         if model == "claude_code":
             claude_model = os.getenv('CLAUDE_MODEL')
             command = command.format(model=claude_model)
+        elif model == "qwen_code":
+            qwen_model = os.getenv("QWEN_CODE_MODEL")
+            command = command.format(model=qwen_model)
         return command
     return None
 

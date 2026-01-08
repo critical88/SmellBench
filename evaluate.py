@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from client import LLMFactory, LLMClient, create_agent_command
 from collections import defaultdict
 from testunits import replace_and_test_caller, run_project_tests
-from utils import strip_python_comments
+from utils import strip_python_comments, disableGitTools
 try:
     from unidiff import PatchSet
 except ImportError:
@@ -867,7 +867,7 @@ class RefactorEvaluator:
             command,
             cwd=self.project_repo,
             input=prompt,
-            text=True,
+            text=True, 
             capture_output=True,
         )
         if process.stdout:
@@ -1362,6 +1362,7 @@ class RefactorEvaluator:
         diff_text = ""
         diff_files: List[str] = []
         success = False
+        
         try:
             self._log("committing bad code")
             self._run_git_command(["reset", "--hard", original_head])
@@ -1379,7 +1380,8 @@ class RefactorEvaluator:
                 self._log("use code agent")
                 # Hide reference callees before invoking the agent to avoid data leakage.
                 removal_records = self._remove_ground_truth_callees(case)
-                self._invoke_code_agent(prompt)
+                with disableGitTools(self.project_repo):
+                    self._invoke_code_agent(prompt)
                 self._restore_ground_truth_callees(removal_records)
                 diff_text = self._run_git_command(["diff"]).stdout
                 diff_output = self._run_git_command(["diff", "--name-only"]).stdout

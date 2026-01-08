@@ -3,7 +3,7 @@ from pathlib import Path
 import os
 import textwrap
 import ast
-
+import shutil
 @contextlib.contextmanager
 def pushd(path: Path):
     """Temporarily change directories."""
@@ -13,6 +13,23 @@ def pushd(path: Path):
         yield
     finally:
         os.chdir(previous)
+
+@contextlib.contextmanager
+def disableGitTools(project_path: Path):
+    git_dir = project_path / ".git"
+    tmp_dir = project_path.parent / "tmp_repo"
+    dest_dir = tmp_dir / ".git"
+    os.makedirs(tmp_dir, exist_ok=True)
+    move = False
+    if git_dir.exists():
+        shutil.move(git_dir, dest_dir)
+        move = True
+    try:
+        yield
+    finally:
+        if dest_dir.exists() and move:
+            shutil.move(dest_dir, git_dir)
+
 
 
 def strip_python_comments(text: str) -> str:
