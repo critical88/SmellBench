@@ -6,7 +6,7 @@ from client import LLMFactory
 from dotenv import load_dotenv
 from typing import Dict, List, Tuple
 import textwrap
-from utils import strip_python_comments
+from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL
 
 
 class BaseCollector():
@@ -861,14 +861,14 @@ Callee:
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 local_vars.add(node.id)
         
-        print(f"\nMethod information:")
-        print(f"Position arguments: {list(zip(args_info['args'], args_info['defaults']))}")
-        print(f"Keyword-only arguments: {list(zip(args_info['kwonly_args'], args_info['kwonly_defaults']))}")
+        _log(f"\nMethod information:", level=DEBUG_LOG_LEVEL)
+        _log(f"Position arguments: {list(zip(args_info['args'], args_info['defaults']))}", level=DEBUG_LOG_LEVEL)
+        _log(f"Keyword-only arguments: {list(zip(args_info['kwonly_args'], args_info['kwonly_defaults']))}", level=DEBUG_LOG_LEVEL)
         if args_info['varargs']:
-            print(f"Varargs (*{args_info['varargs']})")
+            _log(f"Varargs (*{args_info['varargs']})", level=DEBUG_LOG_LEVEL)
         if args_info['varkw']:
-            print(f"Varkw (**{args_info['varkw']})")
-        print(f"Local variables: {local_vars}")
+            _log(f"Varkw (**{args_info['varkw']})", level=DEBUG_LOG_LEVEL)
+        _log(f"Local variables: {local_vars}", level=DEBUG_LOG_LEVEL)
         
         # 移除装饰器、函数定义行和docstring，只保留函数体
         body_without_docstring = [node for node in method_ast.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Str)]
@@ -882,9 +882,9 @@ Callee:
         caller_lines = caller_content.splitlines()
 
 
-        print(f"\n---")
-        print(f"In method: {caller['caller_method']}")
-        print(f"At line {caller['line_number']}, column {caller['col_offset']}")
+        _log(f"\n---", level=DEBUG_LOG_LEVEL)
+        _log(f"In method: {caller['caller_method']}", level=DEBUG_LOG_LEVEL)
+        _log(f"At line {caller['line_number']}, column {caller['col_offset']}", level=DEBUG_LOG_LEVEL)
         # 分析caller方法中的局部变量
         caller_locals = set()
                 
@@ -909,7 +909,7 @@ Callee:
             try:
                 expr_ast = ast.parse(call_line)
             except Exception as e:
-                print(f"Error parsing call: {e}")
+                _log(f"Error parsing call: {e}", level=DEBUG_LOG_LEVEL)
                 return None
             first_node = expr_ast.body[0]
             ## 如果是元组，说明是不合法的调用，需要特殊处理
@@ -954,10 +954,9 @@ Callee:
             actual_args = [ast.unparse(arg) for arg in call_ast.args]
             # 获取关键字参数
             actual_kwargs = {kw.arg: ast.unparse(kw.value) for kw in call_ast.keywords}
-            
-            print(f"\nCall arguments:")
-            print(f"Position args: {actual_args}")
-            print(f"Keyword args: {actual_kwargs}")
+            _log(f"\nCall arguments:", level=DEBUG_LOG_LEVEL)
+            _log(f"Position args: {actual_args}", level=DEBUG_LOG_LEVEL)
+            _log(f"Keyword args: {actual_kwargs}", level=DEBUG_LOG_LEVEL)
             
             # 创建参数映射
             arg_mapping = {}
@@ -1036,8 +1035,7 @@ Callee:
                 else:
                     arg_mapping[args_info['varkw']] = '{}'
 
-            
-            print(f"Argument mapping: {arg_mapping}")
+            _log(f"Argument mapping: {arg_mapping}", level=DEBUG_LOG_LEVEL)
             
             # 修改方法体中的变量名
             modified_body = callee_method_body
@@ -1138,8 +1136,8 @@ Callee:
             indent = len(original_call[0]) - len(original_call[0].lstrip())
             indented_body = '\n'.join([' ' * indent + line for line in modified_body.splitlines()])
             
-            print(f"\nReplaced with:")
-            print(indented_body)
+            _log(f"\nReplaced with:", level=DEBUG_LOG_LEVEL)
+            _log(indented_body, level=DEBUG_LOG_LEVEL)
             
             # 收集caller中的替换信息
             return {
@@ -1149,7 +1147,7 @@ Callee:
                 'imports': imports
             }
         
-    def collect(self, callee_mapping, all_calls, all_definitions, all_class_parents, family_classes):
+    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
         """
         @param callee_mapping: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}

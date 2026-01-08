@@ -3,7 +3,8 @@ import os
 import subprocess
 from pathlib import Path
 import argparse
-from utils import pushd
+from utils import pushd, _log, DEBUG_LOG_LEVEL
+from tqdm import tqdm
 
 def reset_repository(repo_path, commit_hash=None):
     """Reset the git repository to its latest state"""
@@ -45,7 +46,7 @@ def run_project_tests(project_path, src_path, test_file_paths):
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content, poject_dir="../project", commit_hash=None):
+def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content, poject_dir="../project", commit_hash=None, verbose=False):
     # Define paths
     base_project_path = poject_dir
     module_path = os.path.normpath(src_path).split(os.sep)[-1]
@@ -60,18 +61,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
         print(f"Project reset failed")
         return False
 
-    # Prepare test file paths
     test_file_paths = testsuites
-    # for test_module_path in testsuites:
-    #     path = test_module_path[0].lstrip(project_name).lstrip(".").replace(".", os.sep) + ".py"
-    #     file_path = os.path.join(base_project_path, project_name, path)
-    #     if os.path.exists(file_path):
-    #         test_file_paths.append(os.path.abspath(file_path))
-    #     else:
-    #         print(f"Test file not found: {path}")
-    #         return False
-
-    # Replace caller files
     if caller_file_content is not None:
         for code_item in caller_file_content:
             module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
@@ -84,10 +74,12 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
     # Run tests
     success, output = run_project_tests(project_path, src_path, test_file_paths)
     if success:
-        print(f"Tests passed for {project_name}")
+        # print(f"Tests passed for {project_name}")
+        _log(f"Tests passed for {project_name}",  verbose=verbose)
         return True
     else:
-        print(f"Tests failed for {project_name}\nOutput: {output}")
+        _log(f"Tests failed for {project_name}",  verbose=verbose)
+        _log(f"Output: {output}",level=DEBUG_LOG_LEVEL, verbose=verbose)
         return False
 
 def process_refactoring(project_name):
@@ -119,7 +111,7 @@ def process_refactoring(project_name):
     src_path = settings.get("src_path", "")
     # Process each refactoring
     successed_refactor_data = []
-    for refactor_item in refactor_data:
+    for refactor_item in tqdm(refactor_data, desc="testing cases..."):
         success = replace_and_test_caller(project_name, src_path, refactor_item['testsuites'], refactor_item['caller_file_content'])
         
         if success:

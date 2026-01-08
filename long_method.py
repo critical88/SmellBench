@@ -2,6 +2,7 @@ import ast
 import os
 
 from base_method import BaseCollector
+from tqdm import tqdm
 
 class LongMethodCollector(BaseCollector):
 
@@ -9,7 +10,7 @@ class LongMethodCollector(BaseCollector):
         super().__init__(project_path, project_name, src_path)
     
     
-    def collect(self, class_methods, all_calls, all_definitions, all_class_parents, family_classes):
+    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -28,7 +29,7 @@ class LongMethodCollector(BaseCollector):
         long_methods = []
         
         # 遍历所有调用者方法
-        for caller_method, callee_methods in all_calls.items():
+        for caller_method, callee_methods in tqdm(all_calls.items(), desc="Scaning Long Method"):
             caller_module = caller_method[0]
             caller_file = self.get_file_from_module(caller_module)
             # ('urllib3.src.urllib3.contribopenssl', 'WrappedSocket', 'recv')

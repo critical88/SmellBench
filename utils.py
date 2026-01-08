@@ -4,6 +4,10 @@ import os
 import textwrap
 import ast
 import shutil
+
+INFO_LOG_LEVEL=0
+DEBUG_LOG_LEVEL=1
+
 @contextlib.contextmanager
 def pushd(path: Path):
     """Temporarily change directories."""
@@ -30,6 +34,14 @@ def disableGitTools(project_path: Path):
         if dest_dir.exists() and move:
             shutil.move(dest_dir, git_dir)
 
+def _log(text, level=INFO_LOG_LEVEL, verbose=False):
+    if level > INFO_LOG_LEVEL:
+        if verbose:
+            print(text)
+        return
+    print(text)
+
+        
 
 
 def strip_python_comments(text: str) -> str:

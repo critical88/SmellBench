@@ -9,7 +9,7 @@ from base_method import BaseCollector
 import json
 import traceback
 import subprocess
-from utils import pushd
+from utils import pushd, _log, DEBUG_LOG_LEVEL
 
 class MethodCallVisitor(ast.NodeVisitor):
     def __init__(self, 
@@ -505,7 +505,7 @@ class MethodAnalyzer():
         self.visitor = MethodCallVisitor(project_path, project_name, src_path, all_classes, self.class_parent, function_variables)
 
     def analyze_file(self, file_path) -> Tuple[Dict, Dict, Dict]:
-        print(f"Analyzing file: {file_path}")
+        _log(f"Analyzing file: {file_path}")
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -609,8 +609,6 @@ class MethodAnalyzer():
             ignored_packages = ["venv", "site-packages"]
             if any(ignored in root for ignored in ignored_packages):
                 continue
-            print(f"\nScanning directory: {root}")
-            print(f"Found {len(files)} files")
             
             for file in files:
                 if file.endswith('.py'):
@@ -619,29 +617,13 @@ class MethodAnalyzer():
                         all_calls.update(calls)
                         all_definitions.update(definitions)
                         all_test_calls.update(test_calls)
-                        print(f"Found {len(calls)} normal calls, {len(test_calls)} test calls, and {len(definitions)} definitions in {file}")
+                        _log(f"Found {len(calls)} normal calls, {len(test_calls)} test calls, and {len(definitions)} definitions in {file}", level=DEBUG_LOG_LEVEL)
                     except Exception as e:
                         print(f"Error processing {file}: {e}")
                         traceback.print_exc()
 
         family_classes = self._collect_family_classes(all_class_parents)
 
-        # 按callee调用组织方法调用信息 
-        callee_mapping = defaultdict(list)
-        ## all_calls的组织结构是，key=》caller，即谁调用了，value=》called_methods，即被调用的方法
-        ## 这个called_methods可能不是当前class，甚至不是当前file内的，但要求必须是同一repo内的
-        ## 整体来说，就是当前方法里调用了哪些方法
-        ## 后面要做的就是reverse这个过程，即找到每个方法被调用的次数
-        for caller, called_methods in all_calls.items():
-            ## 非包内的方法不考虑， 或类名为空
-            if not caller[0].startswith(self.module_name) or caller[1] is None:
-                continue
-            module_path, class_name, caller_method_name = caller
-            
-            # 统计方法调用次数
-            for called_method, call_locations in called_methods.items():
-                called_module, called_class, called_method_name = called_method
-                callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         
         collectors: List[BaseCollector] = [
             LongMethodCollector(self.project_path, self.project_name, self.src_path),
@@ -655,8 +637,7 @@ class MethodAnalyzer():
             commit_hash = subprocess.run(['git', "rev-parse", "HEAD"], text=True, cwd=".", capture_output=True, check=True).stdout.strip()
 
         for collector in collectors:
-            ret = collector.collect(callee_mapping, 
-                                    all_calls=all_calls, 
+            ret = collector.collect(all_calls=all_calls, 
                                     all_definitions=all_definitions, 
                                     all_class_parents=all_class_parents,
                                     family_classes=family_classes)

@@ -6,14 +6,33 @@ from base_method import BaseCollector
 from collections import defaultdict
 import textwrap
 from utils import strip_python_comments
+from tqdm import tqdm
 
 
 class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path) -> None:
         super().__init__(project_path, project_name, src_path)
 
-    
-    def collect(self, class_methods, all_calls, all_definitions, all_class_parents, family_classes):
+    def get_callee_mapping(self, all_calls):
+        # 按callee调用组织方法调用信息 
+        callee_mapping = defaultdict(list)
+        ## all_calls的组织结构是，key=》caller，即谁调用了，value=》called_methods，即被调用的方法
+        ## 这个called_methods可能不是当前class，甚至不是当前file内的，但要求必须是同一repo内的
+        ## 整体来说，就是当前方法里调用了哪些方法
+        ## 后面要做的就是reverse这个过程，即找到每个方法被调用的次数
+        for caller, called_methods in all_calls.items():
+            ## 非包内的方法不考虑， 或类名为空
+            if not caller[0].startswith(self.module_name) or caller[1] is None:
+                continue
+            module_path, class_name, caller_method_name = caller
+            
+            # 统计方法调用次数
+            for called_method, call_locations in called_methods.items():
+                called_module, called_class, called_method_name = called_method
+                callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
+        
+        return callee_mapping
+    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -30,10 +49,12 @@ class DuplicatedMethodCollector(BaseCollector):
         CALLEE_MINIMAL_LEN = 5
         # we only preserve 10 callers for one callee to avoid unnecessary overhead
         MAX_CALLER_THRESHOLD = 10
+
+        callee_mapping = self.get_callee_mapping(all_calls)
         
         duplicated_methods = []
         # 遍历所有调用者方法
-        for callee_method, caller_methods in class_methods.items():
+        for callee_method, caller_methods in tqdm(callee_mapping.items(), desc="scanning duplicated codes"):
             if len(caller_methods) < TOTAL_CALLER_SIZE_THRESHOLD:
                 continue
             definition, modified_called_method = self._find_callee(callee_method, all_definitions, all_class_parents)
