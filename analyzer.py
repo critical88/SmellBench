@@ -611,6 +611,16 @@ class MethodAnalyzer():
                 continue
             
             for file in files:
+                """skip test file"""
+                file_name = os.path.basename(file).lower()
+                is_test_file = (
+                    file_name.startswith('test_') or
+                    file_name.endswith('_test.py') or
+                    'tests' in file.lower() or
+                    'test' in file.lower()
+                )
+                if is_test_file:
+                    continue
                 if file.endswith('.py'):
                     try:
                         calls, test_calls, definitions = self.analyze_file(os.path.join(root, file))
