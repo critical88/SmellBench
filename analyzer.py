@@ -517,7 +517,7 @@ class MethodAnalyzer():
         try:
             tree = ast.parse(content)
             visitor.visit(tree)
-            return visitor.method_calls, visitor.test_method_calls, visitor.method_definitions
+            return visitor.method_calls, visitor.method_definitions
         except Exception as e:
             print(f"Error parsing {file_path}: {e}")
             return {}, {}, {}
@@ -595,39 +595,26 @@ class MethodAnalyzer():
         
         all_calls = {}
         all_definitions = {}
-        all_test_calls = {}
         all_class_parents = self.class_parent
         
         # 遍历所有Python文件
         for root, dirs, files in os.walk(project_path):
             src_path = os.path.join(self.project_path, self.project_name, self.src_path)
-            if not os.path.normpath(root).startswith(os.path.normpath(src_path)) and \
-                        not (root.__contains__("test")):
+            if not os.path.normpath(root).startswith(os.path.normpath(src_path)):
                 continue
             if any( p.startswith(".") or (p.startswith("__") and not p=='__init__.py') for p in os.path.relpath(root, project_path).split(os.sep)):
                 continue
-            ignored_packages = ["venv", "site-packages"]
+            ignored_packages = ["venv", "site-packages", "test"]
             if any(ignored in root for ignored in ignored_packages):
                 continue
             
             for file in files:
-                """skip test file"""
-                file_name = os.path.basename(file).lower()
-                is_test_file = (
-                    file_name.startswith('test_') or
-                    file_name.endswith('_test.py') or
-                    'tests' in file.lower() or
-                    'test' in file.lower()
-                )
-                if is_test_file:
-                    continue
                 if file.endswith('.py'):
                     try:
-                        calls, test_calls, definitions = self.analyze_file(os.path.join(root, file))
+                        calls, definitions = self.analyze_file(os.path.join(root, file))
                         all_calls.update(calls)
                         all_definitions.update(definitions)
-                        all_test_calls.update(test_calls)
-                        _log(f"Found {len(calls)} normal calls, {len(test_calls)} test calls, and {len(definitions)} definitions in {file}", level=DEBUG_LOG_LEVEL)
+                        _log(f"Found {len(calls)} normal calls, and {len(definitions)} definitions in {file}", level=DEBUG_LOG_LEVEL)
                     except Exception as e:
                         print(f"Error processing {file}: {e}")
                         traceback.print_exc()
