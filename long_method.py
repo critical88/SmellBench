@@ -6,11 +6,11 @@ from tqdm import tqdm
 
 class LongMethodCollector(BaseCollector):
 
-    def __init__(self, project_path, project_name, src_path) -> None:
-        super().__init__(project_path, project_name, src_path)
+    def __init__(self, project_path, project_name, src_path, all_definitions) -> None:
+        super().__init__(project_path, project_name, src_path, all_definitions)
     
     
-    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
+    def collect(self, all_calls, all_class_parents, family_classes):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -37,7 +37,7 @@ class LongMethodCollector(BaseCollector):
                 continue
             # 统计该调用者调用的所有方法的总行数
             before_refactor_code = []
-            caller_method_definition = all_definitions.get(caller_method)
+            caller_method_definition = self.all_definitions.get(caller_method)
             caller_source = caller_method_definition['source']
             caller_len = self._normalized_function_length(caller_source)
             if caller_len < 5:
@@ -47,7 +47,7 @@ class LongMethodCollector(BaseCollector):
             replacements = []
             for called_method, caller_locations in callee_methods.items():
                 # 获取被调用方法, 由于存在重载问题， 需要进行多次查找
-                definition, modified_called_method = self._find_callee(called_method, all_definitions, all_class_parents)
+                definition, modified_called_method = self._find_callee(called_method, self.all_definitions, all_class_parents)
                 if definition is None:
                     continue
                 callee_source = definition['source']
@@ -82,7 +82,7 @@ class LongMethodCollector(BaseCollector):
                 caller_method: replacements
             }
             total_callee_lines = sum([len(r['replacement']) for r in replacements])
-            before_refactor_code, caller_lines = self.do_replacement(replacement_dict, caller_module, all_definitions)
+            before_refactor_code, caller_lines = self.do_replacement(replacement_dict, caller_module, self.all_definitions)
             total_caller_lines = len(before_refactor_code[0]['code'].splitlines())
             # 如果被调用方法的总行数超过阈值
             if total_callee_lines > TOTAL_CALLEE_LENGTH_THRESHOLD:

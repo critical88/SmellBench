@@ -10,12 +10,28 @@ from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL
 
 
 class BaseCollector():
-    def __init__(self, project_path:str, project_name:str, src_path:str) -> None:
+    def __init__(self, project_path:str, project_name:str, src_path:str, all_definitions:Dict[Tuple, Dict]) -> None:
+        """
+        Docstring for __init__
+        
+        :param self: Description
+        :param project_path: Description
+        :type project_path: str
+        :param project_name: Description
+        :type project_name: str
+        :param src_path: Description
+        :type src_path: str
+        :param all_definitions: the method definition of the repo
+            example: 
+            {(called_module, called_class, called_method_name): definition}
+        
+        """
         self.project_path = project_path
         self.project_name = project_name
         self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.src_path = src_path
         self.file_cache = {}
+        self.all_definitions = all_definitions
         self.language = "python"
         self._init_llm_client()
         self._init_testunit()
@@ -644,11 +660,24 @@ class BaseCollector():
         return last_import_line
 
     def _get_imports_from_callee(self, caller, callee) -> list:
+        if os.path.normpath(caller['file']) == os.path.normpath(callee['file']):
+            return []
         # 1. 分析导入依赖
         caller_imports = self._get_imports(caller['file'])
         callee_imports = self._get_imports(callee['file'])
         callee_used_imports = self._analyze_callee_imports(callee['source'])
         
+        ## filter imports
+        filtered_callee_imports = {}
+        for imp, info in callee_imports.items():
+            if info['source'] == 'project':
+                path = info['path']
+                project_path = os.path.normpath(os.path.join(self.project_path, self.project_name, self.src_path, ".."))
+                rel_path = os.path.relpath(os.path.normpath(path[:-3]), project_path)
+                module_path = ".".join(rel_path.split(os.sep))
+                if module_path == caller['position']['module_path']:
+                    continue
+            filtered_callee_imports[imp] = info
         # 找出需要添加的导入
         needed_imports = []
         
@@ -656,13 +685,16 @@ class BaseCollector():
             # 检查是否在callee文件中定义或导入
             # if not any(imp.startswith(ci) for ci in caller_imports.keys()):
             if imp not in caller_imports:
-                if imp in callee_imports:
-                    info = callee_imports[imp]
+                if imp in filtered_callee_imports:
+                    info = filtered_callee_imports[imp]
                     needed_imports.append((imp, info))
         
         return needed_imports
 
     def generate_replacement_caller_from_callee(self, caller, callee, all_class_parents):
+        ## ignore subfunction test.a means def test(): def a(): pass
+        if "." in caller['position']['method_name']:
+            return None
         ret = self._generate_replace_caller_from_callee(caller, callee, all_class_parents)
         return ret
     
@@ -855,8 +887,6 @@ Callee:
         将callee的方法体插入到caller对应的调用位置上，
         处理变量冲突和包导入问题。
         """
-
-        
         ## 处理Import的问题
         imports = self._get_imports_from_callee(caller, callee)
 
@@ -1126,6 +1156,14 @@ Callee:
                 local_vars.discard(var)
                 local_vars.add(new_name)
 
+        # replace the old name into new one in the callee body
+        for old_name, new_name in param_name_mapping.items():
+            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+
+        for old_name, new_name in other_param_mapping.items():
+            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+        
+        # add special variable initialization, for the method params will be reassigned in the callee body
         if assigned_param_names:
             ordered_assigned_params = []
             for name in args_info['args']:
@@ -1151,12 +1189,6 @@ Callee:
             else:
                 modified_body = initializer_block
 
-        # 3. 最后处理入参的变量名替换
-        for old_name, new_name in param_name_mapping.items():
-            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
-
-        for old_name, new_name in other_param_mapping.items():
-            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
         existing_names = set(all_params)
         existing_names.update(local_vars)
         existing_names.update(caller_locals)
@@ -1179,11 +1211,10 @@ Callee:
             'imports': imports
         }
         
-    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
+    def collect(self, all_calls, all_class_parents, family_classes):
         """
         @param callee_mapping: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
-        @param all_definitions: {(called_module, called_class, called_method_name): definition}
         
         @return: List of methods [{"type": xxx , "called": (module_path, class_name, method_name), "caller": call_locations}]
         """

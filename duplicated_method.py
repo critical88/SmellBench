@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 
 class DuplicatedMethodCollector(BaseCollector):
-    def __init__(self, project_path, project_name, src_path) -> None:
-        super().__init__(project_path, project_name, src_path)
+    def __init__(self, project_path, project_name, src_path, all_definitions) -> None:
+        super().__init__(project_path, project_name, src_path, all_definitions)
 
     def get_callee_mapping(self, all_calls):
         # 按callee调用组织方法调用信息 
@@ -32,7 +32,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         
         return callee_mapping
-    def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
+    def collect(self, all_calls, all_class_parents, family_classes):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -57,7 +57,7 @@ class DuplicatedMethodCollector(BaseCollector):
         for callee_method, caller_methods in tqdm(callee_mapping.items(), desc="scanning duplicated codes"):
             if len(caller_methods) < TOTAL_CALLER_SIZE_THRESHOLD:
                 continue
-            definition, modified_called_method = self._find_callee(callee_method, all_definitions, all_class_parents)
+            definition, modified_called_method = self._find_callee(callee_method, self.all_definitions, all_class_parents)
             callee_method = modified_called_method
             called_definition = definition
             if not called_definition or not called_definition.get('source'):
@@ -89,7 +89,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 
                 if not os.path.exists(caller_file):
                     continue
-                caller_method_definition = all_definitions.get(caller_method)
+                caller_method_definition = self.all_definitions.get(caller_method)
                 
                 replacements = []
                 # 获取被调用方法的定义
@@ -124,7 +124,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 selected_callers = all_callers
             for caller_method in selected_callers:
                 caller_module = caller_method[0]
-                caller_method_definition = all_definitions.get(caller_method)
+                caller_method_definition = self.all_definitions.get(caller_method)
                 after_refactor = {"type": "caller", "code": caller_method_definition['source'], "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}
                 replacements = caller_replacement_dict[caller_module][caller_method]
                 for replacement in replacements:
@@ -136,7 +136,7 @@ class DuplicatedMethodCollector(BaseCollector):
 
             for caller_module, caller_replacements in selected_replacements.items():
 
-                before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module, all_definitions)
+                before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module, self.all_definitions)
                 before_refactor_code.extend(before_refactors)
 
                 caller_file_contents.append({

@@ -634,8 +634,8 @@ class MethodAnalyzer():
 
         
         collectors: List[BaseCollector] = [
-            LongMethodCollector(self.project_path, self.project_name, self.src_path),
-            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path),
+            LongMethodCollector(self.project_path, self.project_name, self.src_path, all_definitions),
+            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path, all_definitions),
             # OverloadedMethodCollector(self.project_path, self.project_name, self.src_path)
         ]
         result = {}
@@ -646,7 +646,6 @@ class MethodAnalyzer():
 
         for collector in collectors:
             ret = collector.collect(all_calls=all_calls, 
-                                    all_definitions=all_definitions, 
                                     all_class_parents=all_class_parents,
                                     family_classes=family_classes)
             refactored_count += len(ret)
