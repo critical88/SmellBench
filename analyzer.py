@@ -36,6 +36,7 @@ class MethodCallVisitor(ast.NodeVisitor):
         self.all_classes = all_classes
         self.class_parent = class_parent
         self.function_variables = function_variables
+        self.method_scope = []
         self._init_vars()
 
     
@@ -182,7 +183,10 @@ class MethodCallVisitor(ast.NodeVisitor):
 
 
     def visit_FunctionDef(self, node):
-        method_key = (self.module_path, self.current_class, node.name)
+        method_name = self.method_scope + [node.name]
+        method_name = ".".join(method_name)
+        
+        method_key = (self.module_path, self.current_class, method_name)
         # 使用原始文件内容来保留格式
         original_lines = self.file_lines[node.lineno-1:node.end_lineno]
         original_source = '\n'.join(original_lines)
@@ -201,15 +205,17 @@ class MethodCallVisitor(ast.NodeVisitor):
 
         if self.current_class:
             class_key = (self.module_path, self.current_class)
-            self.class_methods[class_key].add(node.name)
+            self.class_methods[class_key].add(method_name)
             
         old_method = self.current_method
-        self.current_method = node.name
+        self.current_method = method_name
         
         # 存储方法定义信息，包含完整的模块路径
         self.variable_types_stack.append({})
         self._bind_variables()
+        self.method_scope.append(node.name)
         self.generic_visit(node)
+        self.method_scope.pop()
         self.variable_types_stack.pop()
         self.current_method = old_method
     def module_exists(self, module_path):
@@ -495,14 +501,40 @@ class MethodFilter():
         return True
     
 class MethodAnalyzer():
-    def __init__(self, project_name: str, src_path: str, project_path: str):
+    def __init__(self, project_name: str,  project_path: str):
+        
+        meta_info, all_classes, self.class_parent, self.function_testunit, function_variables = self._read_meta_info(project_name)
+        self.meta_info = meta_info
+        src_path = meta_info['src_path']
         self.project_path = project_path
         self.src_path = src_path
         self.project_name = project_name
         self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.package_root = os.path.dirname(project_path)
-        all_classes, self.class_parent, self.function_testunit, function_variables = self._read_meta_info()
         self.visitor = MethodCallVisitor(project_path, project_name, src_path, all_classes, self.class_parent, function_variables)
+
+    def _read_meta_info(self, project_name):
+        testunit_file = os.path.join("output", project_name, f"function_testunit_mapping.json")
+        if not os.path.exists(testunit_file):
+            raise Exception("please first run `testunit_cover.py` to generate mapping file.")
+        with open(testunit_file, 'r', encoding='utf-8') as f:
+            meta_info = json.load(f)
+        all_classes = set()
+        all_class_parent = defaultdict(list)
+        for _, _cls in meta_info['classes'].items():
+            key = (_cls['module'], _cls['qualname'])
+            all_classes.add(key)
+            for module, parent_cls  in _cls['bases']:
+                all_class_parent[key].append((module, parent_cls))
+        
+        functions_info = meta_info['functions']
+        function_testunit = {}
+        function_variables = {}
+        for k, v in functions_info.items():
+            function_testunit[k] = v['tests']
+            function_variables[k] = v['variable_types']
+            
+        return meta_info['meta'], all_classes, all_class_parent, function_testunit, function_variables
 
     def analyze_file(self, file_path) -> Tuple[Dict, Dict, Dict]:
         _log(f"Analyzing file: {file_path}")
@@ -558,28 +590,7 @@ class MethodAnalyzer():
 
         return family_classes
     
-    def _read_meta_info(self):
-        testunit_file = os.path.join("output", self.project_name, f"function_testunit_mapping.json")
-        if not os.path.exists(testunit_file):
-            raise Exception("please first run `testunit_cover.py` to generate mapping file.")
-        with open(testunit_file, 'r', encoding='utf-8') as f:
-            meta_info = json.load(f)
-        all_classes = set()
-        all_class_parent = defaultdict(list)
-        for _, _cls in meta_info['classes'].items():
-            key = (_cls['module'], _cls['qualname'])
-            all_classes.add(key)
-            for module, parent_cls  in _cls['bases']:
-                all_class_parent[key].append((module, parent_cls))
-        
-        functions_info = meta_info['functions']
-        function_testunit = {}
-        function_variables = {}
-        for k, v in functions_info.items():
-            function_testunit[k] = v['tests']
-            function_variables[k] = v['variable_types']
-            
-        return all_classes, all_class_parent, function_testunit, function_variables
+    
         
 
     def find_refactor_codes(self) -> List[Tuple[Tuple[str, str, str], int, Dict]]:

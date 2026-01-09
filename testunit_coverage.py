@@ -610,7 +610,7 @@ class CoverageGraph:
         class_lookup: Optional[Mapping[str, ClassInfo]] = None,
     ) -> None:
         """Initialize the graph with source metadata and empty adjacency lists."""
-        self.src_root = src_root
+        self.src_root = src_root.parent
         self.file_index = file_index
         self.lookup = lookup
         self.class_lookup = class_lookup or {}
@@ -726,10 +726,11 @@ class CoverageGraph:
             if needle in method.lower()
         }
 
-    def export_json(self, path: Path) -> None:
+    def export_json(self, path: Path, meta={}) -> None:
         """Serialize method/test adjacency info for downstream tooling."""
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "meta": meta,
             "functions": {
                 method: {
                     "file": str(info.filepath),
@@ -773,7 +774,7 @@ def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileF
     for py_file in src_root.rglob("*.py"):
         if py_file.name.startswith("."):
             continue
-        module = ".".join(py_file.relative_to(src_root).with_suffix("").parts)
+        module = ".".join(py_file.relative_to(src_root.parent).with_suffix("").parts)
         try:
             source = py_file.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(py_file))
@@ -853,11 +854,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path (relative to project root) where pytest tests live. Default: tests",
     )
     parser.add_argument(
-        "--src-path",
-        default="src",
-        help="Implementation source root relative to the project root. Default: src",
-    )
-    parser.add_argument(
         "--pytest-arg",
         action="append",
         default=[],
@@ -884,13 +880,23 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Skip printing the ASCII tree (useful when only querying methods).",
     )
+    parser.add_argument(
+        "--test-ignore",
+        nargs="+",
+        help="ignore the path or file when unit testing"
+        )
+    parser.add_argument(
+        "--commit-id",
+        type=str,
+        default="HEAD"
+        )
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(args: Optional[Sequence[str]] = None) -> int:
     """Entry point: orchestrate coverage run, graph building, and reporting."""
-    args = parse_args(argv)
     project_root =  args.project_root / args.project_name
+    commit_id = args.commit_id
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
     src_root = (project_root / args.src_path).resolve()
@@ -899,7 +905,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     os.makedirs(output_dir, exist_ok=True)
     output_json = output_dir / "function_testunit_mapping.json"
 
-    sys.path.insert(0, str(src_root))
+    sys.path.insert(0, str(src_root.parent))
     sys.path.insert(0, str(project_root))
 
     file_index, lookup, class_lookup = build_function_index(src_root, args.project_name)
@@ -910,10 +916,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pytest_args = [str(tests_path)]
     if args.pytest_args:
         pytest_args.extend(args.pytest_args)
+    if args.test_ignore:
+        pytest_args.extend([f'--ignore={p}' for p in args.test_ignore])
 
     exit_code = 0
     with pushd(project_root):
-        subprocess.run(['git', 'reset', '--hard', 'HEAD'], cwd=".", check=True)
+        subprocess.run(['git', 'reset', '--hard', commit_id], cwd=".", check=True)
         subprocess.run(['git', 'clean', '-fd'], cwd=".", check=True)
         subprocess.run(['pip', 'install', '-e', '.'], cwd=".", check=True)
         cov.start()
@@ -938,8 +946,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         f"Mapped {len(graph.function_to_tests)} methods across "
         f"{len(graph.test_to_functions)} tests."
     )
+    meta = {
+        "test_ignore": args.test_ignore,
+        "src_path": args.src_path,
+        "commit_id": args.commit_id
+    }
 
-    graph.export_json(output_json)
+    graph.export_json(output_json, meta)
 
     # queries_ran = False
     # if args.method:
@@ -956,6 +969,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     return 0
 
+def read_repo(project_name:str=None):
+    with open("repo_list.json") as f:
+        repo_list = json.load(f)
+    if project_name:
+        if project_name not in repo_list:
+            raise ValueError("please fill the information in repo_list.json")
+        return {project_name: repo_list[project_name]}
+    return repo_list
 
 if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+    args = parse_args()
+    repo_list = read_repo(args.project_name)
+    for repo_name, repo_info  in repo_list.items():
+        args.project_name = repo_name
+        args.src_path = repo_info['src_path'] if 'src_path' in repo_info else f'src/{repo_name}'
+        args.commit_id = repo_info['commit_id'] if 'commit_id' in repo_info else 'HEAD'
+        args.test_ignore = repo_info['test_ignore'] if 'test_ignore' in repo_info else []
+        main(args)
+    raise SystemExit()

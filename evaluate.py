@@ -748,6 +748,7 @@ class RefactorEvaluator:
         self.cases = data['refactor_codes']
         self.settings = data['settings']
         self.src_path = self.settings['src_path']
+        self.test_ignore = self.settings.get('test_ignore', [])
         self.output_dir = Path(args.output_dir) / self.project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -1432,12 +1433,13 @@ class RefactorEvaluator:
             prediction = parse_model_prediction(payload["response_text"], case)
             caller_content = self._extract_content(prediction.caller_segments, case)
             success = replace_and_test_caller(
-                self.project_name,
-                self.src_path,
-                case['testsuites'],
-                caller_content,
-                self.project_path,
-                commit_hash=case['commit_hash']
+                project_name=self.project_name,
+                src_path=self.src_path,
+                testsuites=case['testsuites'],
+                caller_file_content=caller_content,
+                project_dir=self.project_path,
+                commit_hash=case['commit_hash'],
+                ignore_test=self.test_ignore
             )
         filtered_prediction_callees = filter_prediction_callees(prediction.callee_segments, ground_truth['local_callees'])
         callee_matches = match_segments(

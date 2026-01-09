@@ -4,9 +4,10 @@ import os
 import textwrap
 import ast
 import shutil
+import logging
 
-INFO_LOG_LEVEL=0
-DEBUG_LOG_LEVEL=1
+INFO_LOG_LEVEL=logging.INFO
+DEBUG_LOG_LEVEL=logging.DEBUG
 
 @contextlib.contextmanager
 def pushd(path: Path):
@@ -34,12 +35,9 @@ def disableGitTools(project_path: Path):
         if dest_dir.exists() and move:
             shutil.move(dest_dir, git_dir)
 
-def _log(text, level=INFO_LOG_LEVEL, verbose=False):
-    if level > INFO_LOG_LEVEL:
-        if verbose:
-            print(text)
-        return
-    print(text)
+def _log(text, level=INFO_LOG_LEVEL):
+    logging.log(level, text)
+    
 
         
 

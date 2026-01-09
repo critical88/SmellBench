@@ -4,33 +4,9 @@ import argparse
 import subprocess
 from pathlib import Path
 from typing import Dict
-
-repo_list: Dict[str, str] = {
-    "click": {
-        "url": "https://github.com/pallets/click.git",
-        "commit_id": "1d038f270701498433cb432f54db89f95f07a845"
-    },
-    "numpy": {
-        "url": "https://github.com/numpy/numpy.git",
-        "commit_id": "c3d60fc8393f3ca3306b8ce8b6453d43737e3d90"
-    },
-    "requests": {
-        "url": "https://github.com/psf/requests.git",
-        "commit_id": "b25c87d7cb8d6a18a37fa12442b5f883f9e41741"
-    },
-    "urllib3": {
-        "url": "https://github.com/urllib3/urllib3.git",
-        "commit_id": "83f8643ffb5b7f197457379148e2fa118ab0fcdc"
-    },
-    "jinja": {
-        "url": "https://github.com/pallets/jinja.git",
-        "commit_id": "15206881c006c79667fe5154fe80c01c65410679"
-    },
-    "pydantic": {
-        "url": "https://github.com/pydantic/pydantic.git",
-        "commit_id": "d771df98f3194ea2695a6a893e318b32381032c3"
-    }
-}
+import json
+with open("repo_list.json") as f:
+    repo_list = json.load(f)
 
 DEFAULT_PROJECT_DIR = Path("../project")
 

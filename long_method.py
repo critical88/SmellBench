@@ -62,6 +62,7 @@ class LongMethodCollector(BaseCollector):
                     caller['source'] = caller_method_definition['source']
                     caller['position'] = {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
                     caller['file'] = caller_file
+                    caller['caller_start_line'] = caller_method_definition['start_line']
                     caller_replacement = self.generate_replacement_caller_from_callee(caller, callee, all_class_parents)
                     if caller_replacement is None:
                         continue

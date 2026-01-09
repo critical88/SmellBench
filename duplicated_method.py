@@ -96,6 +96,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 
                 for caller_location in caller_locations:
                     caller = caller_location
+                    caller['caller_start_line'] = caller_method_definition['start_line']
                     caller['source'] = caller_method_definition['source']
                     caller['position'] = {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
                     caller['file'] = caller_file

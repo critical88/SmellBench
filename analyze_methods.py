@@ -55,37 +55,16 @@ def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
 
 def main(args):
     random.seed(args.seed)
-    projects = {
-        "urllib3": {
-            "src_path": "src/urllib3"
-        },
-        "numpy": {
-            "src_path": "numpy"
-        },
-        "requests": {
-            "src_path": "src/requests"
-        },
-        "pydantic": {
-            "src_path": "pydantic"
-        },
-        "click": {
-            "src_path": "src/click"
-        },
-        "jinja": {
-            "src_path": "src/jinja2"
-        },
-    }
     project_name = args.project_name
-    src_path = projects[project_name]['src_path']
+    
     project_path = args.project_dir
     output_path = args.output_dir
-    project_lib = f"{project_path}/{project_name}/{src_path}"
+    project_lib = f"{project_path}/{project_name}"
 
     print(f"Python version: {sys.version}")
     print(f"Current working directory: {os.getcwd()}")
     print(f"\nAnalyzing codebase: {project_lib}")
-    analyzer = MethodAnalyzer(project_name, src_path, project_path)
-
+    analyzer = MethodAnalyzer(project_name, project_path)
     
     result = analyzer.find_refactor_codes()
     
@@ -97,9 +76,7 @@ def main(args):
     output_base = os.path.join(output_path, project_name)
     os.makedirs(output_base, exist_ok=True)
     with open(os.path.join(output_base, 'refactor_codes.json'), 'w', encoding='utf-8') as f:
-        settings = {
-            "src_path": src_path
-        }
+        settings = analyzer.meta_info
         saved_json = {
             "settings": settings,
             "refactor_codes": refactor_codes

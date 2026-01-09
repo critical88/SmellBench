@@ -243,15 +243,7 @@ class BaseCollector():
             stmt.body, body_info = self._process_block_with_returns(stmt.body, return_var, existing_names, loop_flag_name, extra_flags, in_loop_body=True)
             stmt.orelse, orelse_info = self._process_block_with_returns(stmt.orelse, return_var, existing_names, loop_flag_name, extra_flags, in_loop_body=False)
             has_return = (body_info and body_info.get('has_return')) or (orelse_info and orelse_info.get('has_return'))
-            if needs_flag and loop_flag_name:
-                stmt.body.append(
-                    ast.If(
-                        test=ast.Name(id=loop_flag_name, ctx=ast.Load()),
-                        body=[ast.Break()],
-                        orelse=[]
-                    )
-                )
-            info = {'has_return': True, 'type': 'loop'} if has_return else None
+            info = {'has_return': True, 'type': 'loop', 'flag_name': loop_flag_name} if has_return else None
             statements = [stmt]
             if flag_assign:
                 statements = [flag_assign, stmt]
@@ -317,6 +309,22 @@ class BaseCollector():
                     else:
                         if remaining:
                             info['node'].orelse.extend(remaining)
+                    return new_statements, {'has_return': True}
+                elif info.get('type') == 'loop':
+                    flag_name = info.get('flag_name')
+                    if remaining:
+                        if flag_name:
+                            guard_if = ast.If(
+                                test=ast.UnaryOp(
+                                    op=ast.Not(),
+                                    operand=ast.Name(id=flag_name, ctx=ast.Load())
+                                ),
+                                body=remaining,
+                                orelse=[]
+                            )
+                            new_statements.append(guard_if)
+                        else:
+                            new_statements.extend(remaining)
                     return new_statements, {'has_return': True}
                 else:
                     return new_statements, {'has_return': True}
@@ -441,6 +449,14 @@ class BaseCollector():
                                 'path': file_path,
                                 'method': target.id,
                             }
+                elif isinstance(node, ast.AnnAssign):
+                    if isinstance(node.target, ast.Name):
+                        target = node.target
+                        imports[target.id] = {
+                            'source': 'local',
+                            'path': file_path,
+                            'method': target.id,
+                        }
             
             # 然后处理导入语句
             parent_map = {}
@@ -795,44 +811,16 @@ Callee:
             'replacement': indented_body.splitlines(),
             'imports': imports
         }
-
-    def _generate_replace_caller_from_callee(self, caller, callee, all_class_parents):
-        """
-        caller:调用者，{"file": caller_file, "caller_method": caller_method, "line_number": line_number, "col_offset": col_offset, "end_line_number": end_line_number}
-        callee:被调用者, {"source": source, "file": file, "position": {"module_path": module, "class_name": class_name, "method_name": method_name}}
-        本方法要完成的功能是：
-        将callee的方法体插入到caller对应的调用位置上，
-        处理变量冲突和包导入问题。
-        """
-
-        
-        ## 处理Import的问题
-        imports = self._get_imports_from_callee(caller, callee)
-
-        ### deal callee
-        # 获取方法的AST
-        method_ast = ast.parse(textwrap.dedent(callee['source'])).body[0]
-        decorators = callee.get("decorators")
-        # 检查方法类型
-        is_staticmethod = False
-        is_classmethod = False
-        if 'staticmethod' in decorators:
-            is_staticmethod = True
-        if 'classmethod' in decorators:
-            is_classmethod = True
-        
-        # 获取方法的参数信息
+    def __get_args_from_ast(self, method_ast):
         args_info = {
             'args': [],  # 位置参数
             'defaults': [],  # 默认值
             'kwonly_args': [],  # 仅关键字参数
-            'is_staticmethod': is_staticmethod,
-            'is_classmethod': is_classmethod,
             'kwonly_defaults': [],  # 仅关键字参数的默认值
             'varargs': None,  # *args参数名
             'varkw': None  # **kwargs参数名
         }
-        
+
         # 获取位置参数
         for arg in method_ast.args.args:
             # if arg.arg != 'self':
@@ -854,10 +842,43 @@ Callee:
         args_info['kwonly_args'] = [arg.arg for arg in method_ast.args.kwonlyargs]
         args_info['kwonly_defaults'] = [ast.unparse(default) if default else 'None' 
                                     for default in (method_ast.args.kw_defaults or [])]
+
+        return args_info
         
+
+
+    def _generate_replace_caller_from_callee(self, caller, callee, all_class_parents):
+        """
+        caller:调用者，{"file": caller_file, "caller_method": caller_method, "line_number": line_number, "col_offset": col_offset, "end_line_number": end_line_number}
+        callee:被调用者, {"source": source, "file": file, "position": {"module_path": module, "class_name": class_name, "method_name": method_name}}
+        本方法要完成的功能是：
+        将callee的方法体插入到caller对应的调用位置上，
+        处理变量冲突和包导入问题。
+        """
+
+        
+        ## 处理Import的问题
+        imports = self._get_imports_from_callee(caller, callee)
+
+        ### deal callee
+        # 获取方法的AST
+        callee_method_ast = ast.parse(textwrap.dedent(callee['source'])).body[0]
+        decorators = callee.get("decorators")
+        # 检查方法类型
+        is_staticmethod = False
+        is_classmethod = False
+        if 'staticmethod' in decorators:
+            is_staticmethod = True
+        if 'classmethod' in decorators:
+            is_classmethod = True
+        
+        args_info = self.__get_args_from_ast(callee_method_ast)
+        args_info['is_staticmethod'] = is_staticmethod
+        args_info['is_classmethod'] = is_classmethod
+
         # 分析方法体中的局部变量
         local_vars = set()
-        for node in ast.walk(ast.parse(ast.unparse(method_ast.body))):
+        for node in ast.walk(ast.parse(ast.unparse(callee_method_ast.body))):
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 local_vars.add(node.id)
         
@@ -871,7 +892,7 @@ Callee:
         _log(f"Local variables: {local_vars}", level=DEBUG_LOG_LEVEL)
         
         # 移除装饰器、函数定义行和docstring，只保留函数体
-        body_without_docstring = [node for node in method_ast.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Str)]
+        body_without_docstring = [node for node in callee_method_ast.body if not isinstance(node, ast.Expr) or not isinstance(node.value, ast.Str)]
         callee_method_body = ast.unparse(body_without_docstring)
         
         # 分析调用者的文件
@@ -887,265 +908,276 @@ Callee:
         _log(f"At line {caller['line_number']}, column {caller['col_offset']}", level=DEBUG_LOG_LEVEL)
         # 分析caller方法中的局部变量
         caller_locals = set()
-                
+        caller_source_before_call = caller_lines[caller['caller_start_line']-1:caller['line_number']-1]
+        last_statement = caller_lines[caller['line_number']-1]
+        last_indent = len(last_statement) - len(last_statement.lstrip())
+        caller_source_before_call += [' ' * last_indent + "pass"]
+        try:
+            caller_method_ast = ast.parse(textwrap.dedent("\n".join(caller_source_before_call)))
+        except Exception as e:
+            _log(f"Error parsing call: {e}", level=DEBUG_LOG_LEVEL)
+            return
+        caller_args_info = self.__get_args_from_ast(caller_method_ast.body[0])
+        caller_locals = set(caller_args_info['args'])
         # 找到调用者的方法
-        for node in ast.walk(caller_tree):
+        for node in ast.walk(caller_method_ast):
             # 只收集在当前行之前的变量
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 caller_locals.add(node.id)
-            if not isinstance(node, ast.FunctionDef) or node.name != caller['caller_method']:
-                continue
+        # special use for `self` 
+        if "self" in caller_locals:
+            caller_locals.remove("self")
             
-            # 找到调用点
-            start_line = caller['line_number'] - 1  # 转为0-based索引
-            end_line = caller['end_line_number']
-            
-            original_call = caller_lines[start_line:end_line]
+        # 找到调用点
+        start_line = caller['line_number'] - 1  # 转为0-based索引
+        end_line = caller['end_line_number']
         
-            # 分析调用语句，获取实际参数
-            # 将多行调用合并成一行
-            call_line = textwrap.dedent("\n".join(original_call))
-            # 解析整个表达式
-            try:
-                expr_ast = ast.parse(call_line)
-            except Exception as e:
-                _log(f"Error parsing call: {e}", level=DEBUG_LOG_LEVEL)
-                return None
-            first_node = expr_ast.body[0]
-            ## 如果是元组，说明是不合法的调用，需要特殊处理
-            if isinstance(first_node, ast.Expr) and isinstance(first_node.value, ast.Tuple):
-                return None
-            # 检查是否是赋值语句
-            if isinstance(first_node, ast.Assign):
-                if len(first_node.targets) > 1:
-                    continue
-                    
-                target = first_node.targets[0]
-                # 获取赋值语句左侧的变量名
-                if isinstance(target, ast.Name):
-                    # 简单变量赋值，如 x = func()
-                    return_var = target.id
-                else:
-                    # 属性赋值，如 self.x = func()
-                    return_var = ast.unparse(target)
-                call_ast = first_node.value
-            else:
-                return_var = None
-                call_ast = first_node.value if isinstance(first_node, ast.Expr) else None
+        original_call = caller_lines[start_line:end_line]
+    
+        # 分析调用语句，获取实际参数
+        # 将多行调用合并成一行
+        call_line = textwrap.dedent("\n".join(original_call))
+        # 解析整个表达式
+        try:
+            expr_ast = ast.parse(call_line)
+        except Exception as e:
+            _log(f"Error parsing call: {e}", level=DEBUG_LOG_LEVEL)
+            return
+        first_node = expr_ast.body[0]
+        ## 如果是元组，说明是不合法的调用，需要特殊处理
+        if isinstance(first_node, ast.Expr) and isinstance(first_node.value, ast.Tuple):
+            return
+        # 检查是否是赋值语句
+        if isinstance(first_node, ast.Assign):
+            if len(first_node.targets) > 1:
+                return
                 
-            if not isinstance(call_ast, ast.Call):
-                # 该调用可能只是某些方法的入参，或者计算表达式的一部分，因此无需考虑
-                continue
-            called_name = None
-            if isinstance(call_ast.func, ast.Attribute):
-                called_name = call_ast.func.attr
-            elif isinstance(call_ast.func, ast.Name):
-                called_name = call_ast.func.id
+            target = first_node.targets[0]
+            # 获取赋值语句左侧的变量名
+            if isinstance(target, ast.Name):
+                # 简单变量赋值，如 x = func()
+                return_var = target.id
             else:
-                ## maybe the consecutive calling, such as `help_option(*help_option_names)(self)``
-                continue
-            if called_name != callee['position']['method_name']:
-                ## this indicates the first calling method is not the callee in this line,
-                ## e.g., add_data(self.parse_tuple(with_condexpr=True))
-                ## first calling_method = parse_tuple but call_ast.func.id = add_data
-                continue
+                # 属性赋值，如 self.x = func()
+                return_var = ast.unparse(target)
+            call_ast = first_node.value
+        else:
+            return_var = None
+            call_ast = first_node.value if isinstance(first_node, ast.Expr) else None
             
-            # 获取位置参数
-            actual_args = [ast.unparse(arg) for arg in call_ast.args]
-            # 获取关键字参数
-            actual_kwargs = {kw.arg: ast.unparse(kw.value) for kw in call_ast.keywords}
-            _log(f"\nCall arguments:", level=DEBUG_LOG_LEVEL)
-            _log(f"Position args: {actual_args}", level=DEBUG_LOG_LEVEL)
-            _log(f"Keyword args: {actual_kwargs}", level=DEBUG_LOG_LEVEL)
+        if not isinstance(call_ast, ast.Call):
+            # 该调用可能只是某些方法的入参，或者计算表达式的一部分，因此无需考虑
+            return
+        called_name = None
+        if isinstance(call_ast.func, ast.Attribute):
+            called_name = call_ast.func.attr
+        elif isinstance(call_ast.func, ast.Name):
+            called_name = call_ast.func.id
+        else:
+            ## maybe the consecutive calling, such as `help_option(*help_option_names)(self)``
+            return 
+        if called_name != callee['position']['method_name']:
+            ## this indicates the first calling method is not the callee in this line,
+            ## e.g., add_data(self.parse_tuple(with_condexpr=True))
+            ## first calling_method = parse_tuple but call_ast.func.id = add_data
+            return
+        
+        # 获取位置参数
+        actual_args = [ast.unparse(arg) for arg in call_ast.args]
+        # 获取关键字参数
+        actual_kwargs = {kw.arg: ast.unparse(kw.value) for kw in call_ast.keywords}
+        _log(f"\nCall arguments:", level=DEBUG_LOG_LEVEL)
+        _log(f"Position args: {actual_args}", level=DEBUG_LOG_LEVEL)
+        _log(f"Keyword args: {actual_kwargs}", level=DEBUG_LOG_LEVEL)
+        
+        # 创建参数映射
+        arg_mapping = {}
+        
+        # 处理位置参数
+        min_args = len(args_info['args']) - len(args_info['defaults'])
+        
+        # 检查是否提供了足够的位置参数
+        if len(actual_args) < min_args and not args_info['varargs']:
+            raise ValueError(f"Not enough positional arguments. Expected at least {min_args}, got {len(actual_args)}")
+        special_position = args_info['is_classmethod'] or (len(args_info['args']) > 0 and args_info['args'][0] == 'self')
+        # 处理普通位置参数
+        for i, arg_name in enumerate(args_info['args']):
+            # 如果是第一个参数，需要特殊处理
             
-            # 创建参数映射
-            arg_mapping = {}
-            
-            # 处理位置参数
-            min_args = len(args_info['args']) - len(args_info['defaults'])
-            
-            # 检查是否提供了足够的位置参数
-            if len(actual_args) < min_args and not args_info['varargs']:
-                raise ValueError(f"Not enough positional arguments. Expected at least {min_args}, got {len(actual_args)}")
-            special_position = args_info['is_classmethod'] or (len(args_info['args']) > 0 and args_info['args'][0] == 'self')
-            # 处理普通位置参数
-            for i, arg_name in enumerate(args_info['args']):
-                # 如果是第一个参数，需要特殊处理
-                
-                if special_position and i == 0:
-                    if args_info['is_classmethod']:
-                        # 类方法的第一个参数是cls
-                        if isinstance(call_ast.func, ast.Attribute):
-                            # 如果是类方法调用 (如 ClassName.method())
-                            class_name = ast.unparse(call_ast.func.value)
-                            arg_mapping[arg_name] = class_name
-                        elif i < len(actual_args):
-                            # 如果通过位置参数传入了cls
-                            arg_mapping[arg_name] = actual_args[i]
-                        else:
-                            # 如果通过关键字参数传入了cls
-                            arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
-                        special_position = True
-                    elif arg_name == 'self':
-                        arg_mapping[arg_name] = ast.unparse(call_ast.func.value)
+            if special_position and i == 0:
+                if args_info['is_classmethod']:
+                    # 类方法的第一个参数是cls
+                    if isinstance(call_ast.func, ast.Attribute):
+                        # 如果是类方法调用 (如 ClassName.method())
+                        class_name = ast.unparse(call_ast.func.value)
+                        arg_mapping[arg_name] = class_name
+                    elif i < len(actual_args):
+                        # 如果通过位置参数传入了cls
+                        arg_mapping[arg_name] = actual_args[i]
                     else:
-                        # 普通实例方法，第一个参数是self
-                        if i < len(actual_args):
-                            arg_mapping[arg_name] = actual_args[i]
-                        elif arg_name in actual_kwargs:
-                            arg_mapping[arg_name] = actual_kwargs[arg_name]
-                        else:
-                            arg_mapping[arg_name] = 'self'
+                        # 如果通过关键字参数传入了cls
+                        arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
+                    special_position = True
+                elif arg_name == 'self':
+                    arg_mapping[arg_name] = ast.unparse(call_ast.func.value)
                 else:
-                    # 处理其他参数，需要考虑参数偏移
-                    # 对于实例方法和类方法，实际参数索引需要-1，因为第一个参数(self/cls)已经被特殊处理
-                    arg_index = i
-                    if special_position:
-                        arg_index = i - 1
-                    
-                    if arg_index < len(actual_args):
-                        arg_mapping[arg_name] = actual_args[arg_index]
+                    # 普通实例方法，第一个参数是self
+                    if i < len(actual_args):
+                        arg_mapping[arg_name] = actual_args[i]
                     elif arg_name in actual_kwargs:
                         arg_mapping[arg_name] = actual_kwargs[arg_name]
                     else:
-                        arg_mapping[arg_name] = args_info['defaults'][i - (len(args_info['args']) - len(args_info['defaults']))]
-            
-            # 处理*args参数
-            if args_info['varargs']:
-                varargs_list = actual_args[len(args_info['args']):]
-                if varargs_list:
-                    arg_mapping[args_info['varargs']] = f"[{', '.join(varargs_list)}]"
-                else:
-                    arg_mapping[args_info['varargs']] = '[]'
-            
-            # 处理仅关键字参数
-            for i, arg_name in enumerate(args_info['kwonly_args']):
-                if arg_name in actual_kwargs:
+                        arg_mapping[arg_name] = 'self'
+            else:
+                # 处理其他参数，需要考虑参数偏移
+                # 对于实例方法和类方法，实际参数索引需要-1，因为第一个参数(self/cls)已经被特殊处理
+                arg_index = i
+                if special_position:
+                    arg_index = i - 1
+                
+                if arg_index < len(actual_args):
+                    arg_mapping[arg_name] = actual_args[arg_index]
+                elif arg_name in actual_kwargs:
                     arg_mapping[arg_name] = actual_kwargs[arg_name]
                 else:
-                    arg_mapping[arg_name] = args_info['kwonly_defaults'][i]
-            
-            # 处理**kwargs参数
-            if args_info['varkw']:
-                used_kwargs = set(args_info['args']).union(args_info['kwonly_args'])
-                remaining_kwargs = {k: v for k, v in actual_kwargs.items() if k not in used_kwargs}
-                if remaining_kwargs:
-                    kwargs_items = [f"{k}: {v}" for k, v in remaining_kwargs.items()]
-                    arg_mapping[args_info['varkw']] = f"{{{', '.join(kwargs_items)}}}"
-                else:
-                    arg_mapping[args_info['varkw']] = '{}'
+                    arg_mapping[arg_name] = args_info['defaults'][i - (len(args_info['args']) - len(args_info['defaults']))]
+        
+        # 处理*args参数
+        if args_info['varargs']:
+            varargs_list = actual_args[len(args_info['args']):]
+            if varargs_list:
+                arg_mapping[args_info['varargs']] = f"({', '.join(varargs_list)})"
+            else:
+                arg_mapping[args_info['varargs']] = '()'
+        
+        # 处理仅关键字参数
+        for i, arg_name in enumerate(args_info['kwonly_args']):
+            if arg_name in actual_kwargs:
+                arg_mapping[arg_name] = actual_kwargs[arg_name]
+            else:
+                arg_mapping[arg_name] = args_info['kwonly_defaults'][i]
+        
+        # 处理**kwargs参数
+        if args_info['varkw']:
+            used_kwargs = set(args_info['args']).union(args_info['kwonly_args'])
+            remaining_kwargs = {k: v for k, v in actual_kwargs.items() if k not in used_kwargs}
+            if remaining_kwargs:
+                kwargs_items = [f"{k}: {v}" for k, v in remaining_kwargs.items()]
+                arg_mapping[args_info['varkw']] = f"{{{', '.join(kwargs_items)}}}"
+            else:
+                arg_mapping[args_info['varkw']] = '{}'
 
-            _log(f"Argument mapping: {arg_mapping}", level=DEBUG_LOG_LEVEL)
-            
-            # 修改方法体中的变量名
-            modified_body = callee_method_body
-            
-            # 收集所有入参信息
-            all_params = set(args_info['args'] + args_info['kwonly_args'])
-            if args_info['varargs']:
-                all_params.add(args_info['varargs'])
-            if args_info['varkw']:
-                all_params.add(args_info['varkw'])
-            assigned_param_names = local_vars.intersection(all_params)
-            assigned_param_aliases = {name: name for name in assigned_param_names}
-            alias_to_param = {alias: param for param, alias in assigned_param_aliases.items()}
-            
-            # 1. 先处理入参的重命名
-            param_name_mapping = {}
-            other_param_mapping = {}
-            
-            # 处理位置参数和关键字参数
-            for arg_name, arg_value in arg_mapping.items():
-                if arg_name in assigned_param_names:
-                    continue
-                # 如果实参是一个变量名，而不是常量或表达式
-                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg_value) and not arg_value.startswith('_'):
-                    param_name_mapping[arg_name] = arg_value
-                else:
-                    ## self这种替换要在常量替换之后进行
-                    other_param_mapping[arg_name] = arg_value
+        _log(f"Argument mapping: {arg_mapping}", level=DEBUG_LOG_LEVEL)
+        
+        # 修改方法体中的变量名
+        modified_body = callee_method_body
+        
+        # 收集所有入参信息
+        all_params = set(args_info['args'] + args_info['kwonly_args'])
+        if args_info['varargs']:
+            all_params.add(args_info['varargs'])
+        if args_info['varkw']:
+            all_params.add(args_info['varkw'])
+        assigned_param_names = local_vars.intersection(all_params)
+        assigned_param_aliases = {name: name for name in assigned_param_names}
+        alias_to_param = {alias: param for param, alias in assigned_param_aliases.items()}
+        
+        # 1. 先处理入参的重命名
+        param_name_mapping = {}
+        other_param_mapping = {}
+        
+        # 处理位置参数和关键字参数
+        for arg_name, arg_value in arg_mapping.items():
+            if arg_name in assigned_param_names:
+                continue
+            # 如果实参是一个变量名，而不是常量或表达式
+            if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', arg_value) and not arg_value.startswith('_'):
+                param_name_mapping[arg_name] = arg_value
+            else:
+                ## self这种替换要在常量替换之后进行
+                other_param_mapping[arg_name] = arg_value
 
 
-            # 只重命名不是入参的局部变量
-            local_only_vars = (local_vars - all_params) | assigned_param_names
+        # 只重命名不是入参的局部变量
+        local_only_vars = (local_vars - all_params) | assigned_param_names
 
-            # 找出与caller中局部变量冲突的变量
-            conflicting_vars = local_only_vars.intersection(caller_locals)
+        # 找出与caller中局部变量冲突的变量
+        conflicting_vars = local_only_vars.intersection(caller_locals)
 
-            # 处理局部变量
-            for var in local_only_vars:
-                if var in conflicting_vars:
-                    # 只有发生冲突时才重命名
-                    prefix = '_'
+        # 处理局部变量
+        for var in local_only_vars:
+            if var in conflicting_vars:
+                # 只有发生冲突时才重命名
+                prefix = '_'
+                new_name = f"{prefix}{var}"
+                while new_name in caller_locals or new_name in local_vars or new_name in all_params:
+                    prefix += '_'
                     new_name = f"{prefix}{var}"
-                    while new_name in caller_locals or new_name in local_vars or new_name in all_params:
-                        prefix += '_'
-                        new_name = f"{prefix}{var}"
 
-                    modified_body = self._safe_replace_identifier(
-                        modified_body,
-                        var,
-                        new_name
-                    )
-                    if var in alias_to_param:
-                        original_param = alias_to_param.pop(var)
-                        assigned_param_aliases[original_param] = new_name
-                        alias_to_param[new_name] = original_param
-                    local_vars.discard(var)
-                    local_vars.add(new_name)
+                modified_body = self._safe_replace_identifier(
+                    modified_body,
+                    var,
+                    new_name
+                )
+                if var in alias_to_param:
+                    original_param = alias_to_param.pop(var)
+                    assigned_param_aliases[original_param] = new_name
+                    alias_to_param[new_name] = original_param
+                local_vars.discard(var)
+                local_vars.add(new_name)
 
-            if assigned_param_names:
-                ordered_assigned_params = []
-                for name in args_info['args']:
-                    if name in assigned_param_names:
-                        ordered_assigned_params.append(name)
-                for name in args_info['kwonly_args']:
-                    if name in assigned_param_names:
-                        ordered_assigned_params.append(name)
-                if args_info['varargs'] and args_info['varargs'] in assigned_param_names:
-                    ordered_assigned_params.append(args_info['varargs'])
-                if args_info['varkw'] and args_info['varkw'] in assigned_param_names:
-                    ordered_assigned_params.append(args_info['varkw'])
+        if assigned_param_names:
+            ordered_assigned_params = []
+            for name in args_info['args']:
+                if name in assigned_param_names:
+                    ordered_assigned_params.append(name)
+            for name in args_info['kwonly_args']:
+                if name in assigned_param_names:
+                    ordered_assigned_params.append(name)
+            if args_info['varargs'] and args_info['varargs'] in assigned_param_names:
+                ordered_assigned_params.append(args_info['varargs'])
+            if args_info['varkw'] and args_info['varkw'] in assigned_param_names:
+                ordered_assigned_params.append(args_info['varkw'])
 
-                initializer_lines = []
-                for param in ordered_assigned_params:
-                    alias_name = assigned_param_aliases.get(param, param)
-                    initializer_value = arg_mapping.get(param, 'None')
-                    initializer_lines.append(f"{alias_name} = {initializer_value}")
+            initializer_lines = []
+            for param in ordered_assigned_params:
+                alias_name = assigned_param_aliases.get(param, param)
+                initializer_value = arg_mapping.get(param, 'None')
+                initializer_lines.append(f"{alias_name} = {initializer_value}")
 
-                initializer_block = "\n".join(initializer_lines)
-                if modified_body.strip():
-                    modified_body = initializer_block + "\n" + modified_body
-                else:
-                    modified_body = initializer_block
+            initializer_block = "\n".join(initializer_lines)
+            if modified_body.strip():
+                modified_body = initializer_block + "\n" + modified_body
+            else:
+                modified_body = initializer_block
 
-            # 3. 最后处理入参的变量名替换
-            for old_name, new_name in param_name_mapping.items():
-                modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+        # 3. 最后处理入参的变量名替换
+        for old_name, new_name in param_name_mapping.items():
+            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
 
-            for old_name, new_name in other_param_mapping.items():
-                modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
-            existing_names = set(all_params)
-            existing_names.update(local_vars)
-            existing_names.update(caller_locals)
-            if return_var and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', return_var):
-                existing_names.add(return_var)
-            modified_body = self._rewrite_returns_with_flag(modified_body, return_var, existing_names)
-            
-            # 缩进内联的代码
-            indent = len(original_call[0]) - len(original_call[0].lstrip())
-            indented_body = '\n'.join([' ' * indent + line for line in modified_body.splitlines()])
-            
-            _log(f"\nReplaced with:", level=DEBUG_LOG_LEVEL)
-            _log(indented_body, level=DEBUG_LOG_LEVEL)
-            
-            # 收集caller中的替换信息
-            return {
-                'start': start_line,
-                'end': end_line,
-                'replacement': indented_body.splitlines(),
-                'imports': imports
-            }
+        for old_name, new_name in other_param_mapping.items():
+            modified_body = self._safe_replace_identifier(modified_body, old_name, new_name)
+        existing_names = set(all_params)
+        existing_names.update(local_vars)
+        existing_names.update(caller_locals)
+        if return_var and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', return_var):
+            existing_names.add(return_var)
+        modified_body = self._rewrite_returns_with_flag(modified_body, return_var, existing_names)
+        
+        # 缩进内联的代码
+        indent = len(original_call[0]) - len(original_call[0].lstrip())
+        indented_body = '\n'.join([' ' * indent + line for line in modified_body.splitlines()])
+        
+        _log(f"\nReplaced with:", level=DEBUG_LOG_LEVEL)
+        _log(indented_body, level=DEBUG_LOG_LEVEL)
+        
+        # 收集caller中的替换信息
+        return {
+            'start': start_line,
+            'end': end_line,
+            'replacement': indented_body.splitlines(),
+            'imports': imports
+        }
         
     def collect(self, all_calls, all_definitions, all_class_parents, family_classes):
         """

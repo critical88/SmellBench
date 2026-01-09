@@ -28,7 +28,7 @@ def replace_file_content(file_path, new_content):
         print(f"Error replacing file {file_path}: {e}")
         return False
     
-def run_project_tests(project_path, src_path, test_file_paths):
+def run_project_tests(project_path, src_path, test_file_paths, ignore_test=[]):
     """Run the project's test suite"""
     
     try:
@@ -40,15 +40,17 @@ def run_project_tests(project_path, src_path, test_file_paths):
             env['PYTHONPATH'] = str(Path(src_path).parent)
 
             test_func = [] if len(test_file_paths) > 100 else test_file_paths
+            if ignore_test:
+                test_func.extend([f'--ignore={p}' for p in ignore_test])
             result = subprocess.run(['pytest','-x'] + test_func, cwd='.', capture_output=True, text=True, env=env)
         return result.returncode == 0, result.stdout
     except subprocess.CalledProcessError as e:
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content, poject_dir="../project", commit_hash=None, verbose=False):
+def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content=None, ignore_test=[], project_dir="../project", commit_hash=None, verbose=False):
     # Define paths
-    base_project_path = poject_dir
+    base_project_path = project_dir
     module_path = os.path.normpath(src_path).split(os.sep)[-1]
     project_path = os.path.join(base_project_path, project_name)
     # Check if paths exist
@@ -72,14 +74,14 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
                 return False
 
     # Run tests
-    success, output = run_project_tests(project_path, src_path, test_file_paths)
+    success, output = run_project_tests(project_path, src_path, test_file_paths, ignore_test)
     if success:
         # print(f"Tests passed for {project_name}")
-        _log(f"Tests passed for {project_name}",  verbose=verbose)
+        _log(f"Tests passed for {project_name}")
         return True
     else:
-        _log(f"Tests failed for {project_name}",  verbose=verbose)
-        _log(f"Output: {output}",level=DEBUG_LOG_LEVEL, verbose=verbose)
+        _log(f"Tests failed for {project_name}")
+        _log(f"Output: {output}")
         return False
 
 def process_refactoring(project_name):
@@ -109,10 +111,17 @@ def process_refactoring(project_name):
         return False
 
     src_path = settings.get("src_path", "")
+    ignore_test = settings.get("test_ignore", [])
     # Process each refactoring
     successed_refactor_data = []
     for refactor_item in tqdm(refactor_data, desc="testing cases..."):
-        success = replace_and_test_caller(project_name, src_path, refactor_item['testsuites'], refactor_item['caller_file_content'])
+        success = replace_and_test_caller(
+            project_name=project_name, 
+            src_path=src_path, 
+            testsuites=refactor_item['testsuites'], 
+            caller_file_content=refactor_item['caller_file_content'],
+            ignore_test=ignore_test
+        )
         
         if success:
             successed_refactor_data.append(refactor_item)
