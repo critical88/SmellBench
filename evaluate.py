@@ -896,6 +896,7 @@ class RefactorEvaluator:
             raise RuntimeError(
                 f"Code agent command {' '.join(command)} failed with code {process.returncode}"
             )
+        return True
     def _read_cache_code_agent(self, case_id:str,
                                prompt_hash:str):
         cache_dir = Path("cache")
@@ -1380,7 +1381,7 @@ class RefactorEvaluator:
         diff_text = ""
         diff_files: List[str] = []
         success = False
-        
+        prediction = None
         try:
             self._log("committing bad code")
             self._run_git_command(["reset", "--hard", original_head])
@@ -1399,7 +1400,9 @@ class RefactorEvaluator:
                 # Hide reference callees before invoking the agent to avoid data leakage.
                 removal_records = self._remove_ground_truth_callees(case)
                 with disableGitTools(self.project_repo):
-                    self._invoke_code_agent(prompt)
+                    invoke_success = self._invoke_code_agent(prompt)
+                if not invoke_success:
+                    return None, False
                 # self._restore_ground_truth_callees(removal_records)
                 diff_text = self._run_git_command(["diff"]).stdout
                 diff_output = self._run_git_command(["diff", "--name-only"]).stdout
@@ -1445,6 +1448,8 @@ class RefactorEvaluator:
         ground_truth = parse_ground_truth(case)
         if self.use_code_agent:
             prediction, success = self._run_code_agent_workflow(case_id, case, prompt, prompt_hash)
+            if prediction is None:
+                return None
         else:
             payload = self._predict(prompt, prompt_hash, case_id, case)
             prediction = parse_model_prediction(payload["response_text"], case)
