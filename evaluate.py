@@ -96,11 +96,13 @@ DUPLICATED_AGENT_PROMPT = textwrap.dedent(
 These snippets contain duplicated or highly similar logic that should be refactored.
 
 Your task is to:
-1. Identify the duplicated code shared across the given caller methods.
-2. Extract this duplicated logic into a single reusable helper function.
-3. Search the current repository for other methods that contain similar duplicated logic and refactor them to reuse the same helper.
-4. Move the extracted helper function to an appropriate existing file or module in the repository (do not introduce unnecessary new files or classes).
-5. Update all affected caller methods to use the extracted helper function.
+1. Read the related code.
+2. Identify the duplicated code shared across the given caller methods.
+3. Extract this duplicated logic into a single reusable helper function.
+4. Search the current repository for other methods that contain similar duplicated logic and refactor them to reuse the same helper.
+5. Move the extracted helper function to an appropriate existing file or module in the repository (do not introduce unnecessary new files or classes).
+6. Update all affected caller methods to use the extracted helper function.
+7. The missing or incorrect callee method may cause the fail of test, please carefully test the project and find the proper callee methods.  
 
 Constraints:
 - You must not change the original program behavior.
@@ -109,6 +111,8 @@ Constraints:
 - The helper function should be general enough to support all refactored callers.
 
 Carefully reason about code structure, duplication patterns, and file placement.
+
+You have three chances to refactor code and pass all testunit except the ignored test unit, otherwise you should quit refactoring to avoid token waste.
 
 You can do the replacements and summary the replacements in the Response block
 """
@@ -120,13 +124,17 @@ You are given one or more Python code snippets extracted from caller methods wit
 These methods may be overly long, complex, or difficult to read, and would benefit from structural refactoring.
 
 Your task is to:
-1. Analyze the given caller methods to identify opportunities for improving code structure and readability.
+1. Read the related code.
 
-2. Extract appropriate helper functions to encapsulate logically cohesive parts of the existing implementation.
+2. Analyze the given caller methods to identify opportunities for improving code structure and readability.
 
-3. Refactor the original caller methods to use the extracted helper functions, making the overall structure clearer and more modular.
+3. Extract appropriate helper functions to encapsulate logically cohesive parts of the existing implementation.
 
-4. If multiple caller methods are provided, apply consistent refactoring patterns where appropriate.
+4. Refactor the original caller methods to use the extracted helper functions, making the overall structure clearer and more modular.
+
+5. If multiple caller methods are provided, apply consistent refactoring patterns where appropriate.
+
+6. The missing or incorrect callee method may cause the fail of test, please carefully test the project and find the proper callee methods.  
 
 Constraints
 
@@ -148,7 +156,10 @@ Carefully reason about:
 
 3. where the helper functions should be placed to maintain code locality and clarity.
 
+You have three chances to refactor code and pass all testunit except the ignored test unit, otherwise you should quit refactoring to avoid token waste.
+
 You can do the replacements and summary the replacements in the Response block
+
 """
 ).strip()
 
@@ -163,6 +174,8 @@ PROMPT_TEMPLATE = """{system}
 ### Code Snippets
 {code}
 
+### Test Ignore
+{test_ignore}
 ### Response
 """
 
@@ -293,16 +306,19 @@ def convert_to_segments(value: Any, fallback_label: str, text_fields: Sequence[s
     return segments
 
 
-def collect_code_blocks(case: Dict) -> List[str]:
+def collect_code_blocks(case: Dict, use_code_agent:bool=False) -> List[str]:
     value = case['before_refactor_code']
     blocks: List[str] = []
     for i, item in enumerate(value):
-        blocks.append(f"####{i+1}\n`module_path:{item['module_path']}`, `class_name={item['class_name']}`, `method_name={item['method_name']}` and the related code is: \n```python\n{item['code']}\n```")
+        code = f"####{i+1}\n`module_path:{item['module_path']}`, `class_name={item['class_name']}`, `method_name={item['method_name']}`"
+        if not use_code_agent:
+            code += "\nthe related code is: \n```python\n{item['code']}\n```"
+        blocks.append(code)
     return blocks
 
 
-def build_prompt(case: Dict[str, Any], use_code_agent=False) -> str:
-    code_sections = collect_code_blocks(case)
+def build_prompt(case: Dict[str, Any], use_code_agent=False, test_ignore=[]) -> str:
+    code_sections = collect_code_blocks(case, use_code_agent)
     code_blob = "\n\n".join(code_sections)
     instruction = DEFAULT_AGENT_PROMPT if use_code_agent else DEFAULT_USER_INSTRUCTION
     if case['type'] == 'DuplicatedMethod':
@@ -315,6 +331,7 @@ def build_prompt(case: Dict[str, Any], use_code_agent=False) -> str:
         system=SYSTEM_PROMPT,
         instructions=instruction.strip(),
         code=code_blob,
+        test_ignore="\n".join(test_ignore)
     )
 
 
@@ -1383,7 +1400,7 @@ class RefactorEvaluator:
                 removal_records = self._remove_ground_truth_callees(case)
                 with disableGitTools(self.project_repo):
                     self._invoke_code_agent(prompt)
-                self._restore_ground_truth_callees(removal_records)
+                # self._restore_ground_truth_callees(removal_records)
                 diff_text = self._run_git_command(["diff"]).stdout
                 diff_output = self._run_git_command(["diff", "--name-only"]).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
@@ -1391,7 +1408,7 @@ class RefactorEvaluator:
             self._log("parsing predictions")
             prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
             self._log("running testunit")
-            success, output = run_project_tests(os.path.join(self.project_path, self.project_name), self.src_path, case["testsuites"])
+            success, output = run_project_tests(os.path.join(self.project_path, self.project_name), self.src_path, case["testsuites"], ignore_test=self.test_ignore)
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
@@ -1422,7 +1439,7 @@ class RefactorEvaluator:
     def _process_case(self, case_id: str, case: Dict[str, Any]) -> CaseResult:
         # if case['type'] == 'LongMethod':
         #     return
-        prompt = build_prompt(case, self.use_code_agent)
+        prompt = build_prompt(case, self.use_code_agent, self.test_ignore)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
 
         ground_truth = parse_ground_truth(case)

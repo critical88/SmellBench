@@ -73,7 +73,7 @@ class DuplicatedMethodCollector(BaseCollector):
             before_refactor_code = []
             after_refactor_code = []
             caller_file_contents = []
-            testsuites = set()
+            testsuites = self._find_related_testsuite(callee_method)
             valid_calling_times = 0
             
             caller_replacement_dict = defaultdict(dict)

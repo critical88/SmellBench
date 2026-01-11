@@ -5,7 +5,8 @@
     },
     "numpy": {
         "url": "https://github.com/numpy/numpy.git",
-        "commit_id": "c3d60fc8393f3ca3306b8ce8b6453d43737e3d90"
+        "commit_id": "c3d60fc8393f3ca3306b8ce8b6453d43737e3d90",
+        "src_path": "numpy"
     },
     "requests": {
         "url": "https://github.com/psf/requests.git",

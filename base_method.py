@@ -4,7 +4,7 @@ import os
 import re
 from client import LLMFactory
 from dotenv import load_dotenv
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Set
 import textwrap
 from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL
 
@@ -366,7 +366,7 @@ class BaseCollector():
     def _init_llm_client(self):
         self.client = LLMFactory.create_client()
 
-    def _find_related_testsuite(self, current_methods):
+    def _find_related_testsuite(self, current_methods)->Set:
         if not current_methods:
             return set()
         key = current_methods[0]
@@ -695,6 +695,8 @@ class BaseCollector():
         ## ignore subfunction test.a means def test(): def a(): pass
         if "." in caller['position']['method_name']:
             return None
+        if caller['caller_start_line'] > caller['line_number']:
+            return None
         ret = self._generate_replace_caller_from_callee(caller, callee, all_class_parents)
         return ret
     
@@ -892,7 +894,10 @@ Callee:
 
         ### deal callee
         # 获取方法的AST
-        callee_method_ast = ast.parse(textwrap.dedent(callee['source'])).body[0]
+        try:
+            callee_method_ast = ast.parse(textwrap.dedent(callee['source'])).body[0]
+        except:
+            return
         decorators = callee.get("decorators")
         # 检查方法类型
         is_staticmethod = False
