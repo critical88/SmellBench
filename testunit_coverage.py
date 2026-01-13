@@ -19,8 +19,9 @@ from collections import defaultdict
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set
+from typing import Callable, Dict, List, Optional, Sequence, Set
 import subprocess
+from types import CodeType, FrameType
 from utils import pushd
 import shlex
 
@@ -609,12 +610,14 @@ class CoverageGraph:
         file_index: Mapping[Path, FileFunctionIndex],
         lookup: Mapping[str, FunctionInfo],
         class_lookup: Optional[Mapping[str, ClassInfo]] = None,
+        direct_calls: Optional[Mapping[str, Set[str]]] = None,
     ) -> None:
         """Initialize the graph with source metadata and empty adjacency lists."""
         self.src_root = src_root.parent
         self.file_index = file_index
         self.lookup = lookup
         self.class_lookup = class_lookup or {}
+        self.direct_calls = direct_calls
         self.function_to_tests: Dict[str, Set[str]] = defaultdict(set)
         self.test_to_functions: Dict[str, Set[str]] = defaultdict(set)
 
@@ -646,7 +649,14 @@ class CoverageGraph:
                     normalized = _normalize_test_context(context)
                     if not normalized:
                         continue
+                    allowed: Optional[Set[str]] = None
+                    if self.direct_calls is not None:
+                        allowed = self.direct_calls.get(normalized)
+                        if not allowed:
+                            continue
                     for func in funcs:
+                        if allowed is not None and func.key not in allowed:
+                            continue
                         self.function_to_tests[func.key].add(normalized)
                         # self.test_to_functions[normalized].add(func.key)
 
@@ -778,11 +788,72 @@ def _normalize_test_context(name: str) -> str:
     return name[:bracket] if bracket != -1 else name
 
 
-def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileFunctionIndex], Dict[str, FunctionInfo], Dict[str, ClassInfo]]:    
+class _DirectCallTracer:
+    """Profiler that records functions called directly from a test function body."""
+
+    def __init__(
+        self,
+        test_code: CodeType,
+        nodeid: str,
+        code_lookup: Mapping[tuple[str, int], str],
+        call_store: MutableMapping[str, Set[str]],
+    ) -> None:
+        self.test_code = test_code
+        self.nodeid = nodeid
+        self.code_lookup = code_lookup
+        self.call_store = call_store
+        self.previous_profile: Optional[
+            Callable[[FrameType, str, object], None]
+        ] = None
+        self._active = False
+
+    def start(self) -> Callable[[], None]:
+        if not self.nodeid:
+            return lambda: None
+        self.previous_profile = sys.getprofile()
+        sys.setprofile(self._trace)
+        self._active = True
+        return self.stop
+
+    def stop(self) -> None:
+        if not self._active:
+            return
+        sys.setprofile(self.previous_profile)
+        self._active = False
+
+    def _trace(self, frame: FrameType, event: str, arg) -> None:
+        if event != "call":
+            return
+        caller = frame.f_back
+        if not caller or caller.f_code is not self.test_code:
+            return
+        key = self._resolve_key(frame)
+        if key:
+            bucket = self.call_store.get(self.nodeid)
+            if bucket is None:
+                bucket = set()
+                self.call_store[self.nodeid] = bucket
+            bucket.add(key)
+
+    def _resolve_key(self, frame: FrameType) -> Optional[str]:
+        filename = Path(frame.f_code.co_filename).resolve()
+        line = frame.f_code.co_firstlineno
+        return self.code_lookup.get((str(filename), line))
+
+
+def build_function_index(
+    src_root: Path, project_name
+) -> tuple[
+    Dict[Path, FileFunctionIndex],
+    Dict[str, FunctionInfo],
+    Dict[str, ClassInfo],
+    Dict[tuple[str, int], str],
+]:
     """Walk the source tree and build lookup tables for every function and class definition."""
     file_index: Dict[Path, FileFunctionIndex] = {}
     function_lookup: Dict[str, FunctionInfo] = {}
     class_lookup: Dict[str, ClassInfo] = {}
+    function_code_lookup: Dict[tuple[str, int], str] = {}
     for py_file in src_root.rglob("*.py"):
         if py_file.name.startswith("."):
             continue
@@ -808,6 +879,7 @@ def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileF
         line_map: Dict[int, List[FunctionInfo]] = defaultdict(list)
         for func in collector.functions:
             function_lookup[func.key] = func
+            function_code_lookup[(str(func.filepath), func.start)] = func.key
             for line in range(func.start, func.end + 1):
                 line_map[line].append(func)
         for class_info in collector.class_infos:
@@ -819,23 +891,48 @@ def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileF
         )
     if not file_index:
         raise SystemExit(f"No Python files discovered under {src_root}.")
-    return file_index, function_lookup, class_lookup
+    return file_index, function_lookup, class_lookup, function_code_lookup
 
 
 class CoverageContextPlugin:
-    """Pytest plugin that switches coverage contexts per test."""
+    """Pytest plugin that tracks direct calls and switches coverage contexts."""
 
-    def __init__(self, cov: coverage.Coverage):
-        """Store the coverage object we need to drive from pytest hooks."""
+    def __init__(
+        self,
+        cov: coverage.Coverage,
+        code_lookup: Mapping[tuple[str, int], str],
+        direct_calls: Optional[MutableMapping[str, Set[str]]],
+        require_direct_calls: bool,
+    ) -> None:
         self.coverage = cov
+        self.code_lookup = code_lookup
+        self.direct_calls = direct_calls
+        self.require_direct_calls = require_direct_calls
 
-    @pytest.hookimpl(tryfirst=True, hookwrapper=True)
-    def pytest_runtest_protocol(self, item, nextitem):  # type: ignore[override]
-        """Switch coverage contexts before/after each test case."""
-        del nextitem  # unused
+    @pytest.hookimpl(hookwrapper=True)
+    def pytest_runtest_call(self, item):  # type: ignore[override]
+        """Track direct calls from the test body only during the call phase."""
+        normalized = _normalize_test_context(item.nodeid)
+        stop_profiler = self._start_direct_call_profiler(item, normalized)
         self.coverage.switch_context(item.nodeid)
-        yield
-        self.coverage.switch_context("pytest:idle")
+        try:
+            yield
+        finally:
+            self.coverage.switch_context("pytest:idle")
+            if stop_profiler:
+                stop_profiler()
+
+    def _start_direct_call_profiler(
+        self, item, normalized: str
+    ) -> Optional[Callable[[], None]]:
+        if not self.require_direct_calls or self.direct_calls is None:
+            return None
+        test_callable = getattr(item, "obj", None)
+        code = getattr(test_callable, "__code__", None)
+        if not isinstance(code, CodeType):
+            return None
+        tracer = _DirectCallTracer(code, normalized, self.code_lookup, self.direct_calls)
+        return tracer.start()
 
 
 
@@ -888,15 +985,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Skip printing the ASCII tree (useful when only querying methods).",
     )
     parser.add_argument(
-        "--test-ignore",
-        nargs="+",
-        help="ignore the path or file when unit testing"
-        )
-    parser.add_argument(
         "--commit-id",
         type=str,
         default="HEAD"
         )
+    parser.add_argument(
+        "--direct-call-only",
+        action="store_true",
+        default=False,
+        help="Only map methods that are directly called from within each pytest test.",
+    )
     return parser.parse_args(argv)
 
 
@@ -915,10 +1013,23 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     sys.path.insert(0, str(src_root.parent))
     sys.path.insert(0, str(project_root))
 
-    file_index, lookup, class_lookup = build_function_index(src_root, args.project_name)
+    (
+        file_index,
+        lookup,
+        class_lookup,
+        function_code_lookup,
+    ) = build_function_index(src_root, args.project_name)
     cov = coverage.Coverage(branch=True, source=[str(src_root)])
     cov.erase()
-    plugin = CoverageContextPlugin(cov)
+    direct_call_map: Optional[MutableMapping[str, Set[str]]] = None
+    if args.direct_call_only:
+        direct_call_map = defaultdict(set)
+    plugin = CoverageContextPlugin(
+        cov,
+        function_code_lookup,
+        direct_call_map,
+        require_direct_calls=args.direct_call_only,
+    )
         
     pytest_args = []
     if args.pytest_args:
@@ -946,7 +1057,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         print(f"Warning: {message} Proceeding with partial data.", file=sys.stderr)
 
     data = cov.get_data()
-    graph = CoverageGraph(src_root, file_index, lookup, class_lookup)
+    graph = CoverageGraph(
+        src_root,
+        file_index,
+        lookup,
+        class_lookup,
+        direct_call_map,
+    )
     graph.merge(data)
     tree = graph.build_tree()
 
@@ -958,7 +1075,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         "src_path": args.src_path,
         "commit_id": args.commit_id,
         "test_cmd": args.pytest_args,
-        "envs": envs
+        "envs": envs,
+        "direct_call_only": args.direct_call_only,
     }
 
     graph.export_json(output_json, meta)
