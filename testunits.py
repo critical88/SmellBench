@@ -43,9 +43,9 @@ def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
             batch_size = 300
             i = 0
             test_len = len(test_file_paths)
-            if test_len > 10000:
-                ## run all test 
-                return None, None
+            # if test_len > 300:
+            #     ## run all test 
+            #     return None, None
             while(i >= 0 and batch_size * i < test_len):
                 cmd = []
                 if test_cmd:

@@ -90,7 +90,12 @@ def main(args):
     passed_refactors = process_refactoring(project_name)
     print(f"Number of refactor_codes: {result['stat']['raw_refacoter_num']}")
     print(f"Number of refactors with testunits: {result['stat']['refactor_with_test_num']}")
+    print("Number of refactor_codes splits: " + str(result['stat']['split']))
     print("Number of passed refactors:", len(passed_refactors))
+    stat = defaultdict(int)
+    for refactor in passed_refactors:
+        stat[refactor['type']] += 1
+    print("Number of passed refactors splits: " + str(dict(stat)))
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="output", help="Directory for cached outputs and reports.")

@@ -7,17 +7,15 @@ from dataclasses import dataclass
 import json
 from dotenv import load_dotenv
 
-
+load_dotenv()
 CODE_AGENT_COMMAND_MAPPING = {
     # --disallowedTools 'Bash(git:*)'
     "claude_code": "claude -p --model {model} --permission-mode acceptEdits",
     "qwen_code": "qwen -p --model {model} --approval-mode yolo",
 }
 
-
 def create_agent_command(agent):
-    from dotenv import load_dotenv
-    load_dotenv()
+    
     model = None
     if agent in CODE_AGENT_COMMAND_MAPPING:
         command = CODE_AGENT_COMMAND_MAPPING[agent]
@@ -270,7 +268,6 @@ class LLMFactory:
         Returns:
             LLMClient instance
         """
-        load_dotenv()
         if client_type is None:
             client_type = os.getenv('CLIENT_TYPE')
         if client_type.lower() == 'gpt':

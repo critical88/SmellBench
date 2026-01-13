@@ -13,6 +13,9 @@ class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path, all_definitions) -> None:
         super().__init__(project_path, project_name, src_path, all_definitions)
 
+    def name(self):
+        return "duplicated"
+
     def get_callee_mapping(self, all_calls):
         # 按callee调用组织方法调用信息 
         callee_mapping = defaultdict(list)
@@ -73,7 +76,10 @@ class DuplicatedMethodCollector(BaseCollector):
             before_refactor_code = []
             after_refactor_code = []
             caller_file_contents = []
-            testsuites = self._find_related_testsuite(callee_method)
+            callee_testunits = self._find_related_testsuite(callee_method)
+            if len(callee_testunits) > 10:
+                callee_testunits = random.choices(list(callee_testunits), k=10)
+            testsuites = set(callee_testunits)
             valid_calling_times = 0
             
             caller_replacement_dict = defaultdict(dict)
@@ -132,7 +138,10 @@ class DuplicatedMethodCollector(BaseCollector):
                 after_refactor_code.append(after_refactor)
                 selected_replacements[caller_module][caller_method] = replacements
                 valid_calling_times += len(replacements)
-                testsuites.update(self._find_related_testsuite(caller_method))
+                caller_testunits = self._find_related_testsuite(caller_method)
+                if len(caller_testunits) > 3:
+                    caller_testunits = random.choices(list(caller_testunits), k=3)
+                testsuites.update(set(caller_testunits))
 
             for caller_module, caller_replacements in selected_replacements.items():
 

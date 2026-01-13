@@ -36,6 +36,9 @@ class BaseCollector():
         self._init_llm_client()
         self._init_testunit()
 
+    def name(self):
+        raise NotImplementedError()
+
     def _init_testunit(self):
         testunit_file = os.path.join("output", self.project_name, f"function_testunit_mapping.json")
         if not os.path.exists(testunit_file):

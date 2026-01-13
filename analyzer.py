@@ -644,6 +644,7 @@ class MethodAnalyzer():
         with pushd(os.path.join(self.project_path, self.project_name)):
             commit_hash = subprocess.run(['git', "rev-parse", "HEAD"], text=True, cwd=".", capture_output=True, check=True).stdout.strip()
 
+        stat = {}
         for collector in collectors:
             ret = collector.collect(all_calls=all_calls, 
                                     all_class_parents=all_class_parents,
@@ -654,10 +655,12 @@ class MethodAnalyzer():
                 if len(r['testsuites']) > 0:
                     r['commit_hash'] = commit_hash
                     filtered_ret.append(r)
+            stat[collector.name()] = len(filtered_ret)
             refactor_codes.extend(filtered_ret)
         
         result['refactor_codes'] = refactor_codes
         result['stat'] = {
+            "split": stat,
             "raw_refacoter_num": refactored_count,
             "refactor_with_test_num": len(refactor_codes)
         }

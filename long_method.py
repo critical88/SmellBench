@@ -3,12 +3,14 @@ import os
 
 from base_method import BaseCollector
 from tqdm import tqdm
-
+import random
 class LongMethodCollector(BaseCollector):
 
     def __init__(self, project_path, project_name, src_path, all_definitions) -> None:
         super().__init__(project_path, project_name, src_path, all_definitions)
     
+    def name(self):
+        return "long"
     
     def collect(self, all_calls, all_class_parents, family_classes):
         """
@@ -48,7 +50,10 @@ class LongMethodCollector(BaseCollector):
             # for _ in range(2):
             before_refactor_code = []
             after_refactor_code = [{"type": "caller", "code": caller_source, "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}]
-            testsuites = self._find_related_testsuite(caller_method)
+            caller_testsuites = self._find_related_testsuite(caller_method)
+            if len(caller_testsuites) > 10:
+                caller_testsuites = random.choices(list(caller_testsuites), k=10)
+            testsuites = set(caller_testsuites)
             replacements = []
             for called_method, caller_locations in callee_methods.items():
                 if called_method == caller_method:
@@ -61,7 +66,10 @@ class LongMethodCollector(BaseCollector):
                 callee_len = self._normalized_function_length(callee_source)
                 if callee_len < 5:
                     continue
-                testsuites.update(self._find_related_testsuite(called_method))
+                callee_testsuites = self._find_related_testsuite(called_method)
+                if len(callee_testsuites) > 3:
+                    callee_testsuites = random.choices(list(callee_testsuites), k=3)
+                testsuites.update(set(callee_testsuites))
                 callee_file = self.get_file_from_module(modified_called_method[0])
                 callee = {"source": callee_source, 'decorators': definition['decorators'], "file": callee_file }
                 callee['position'] = {"module_path": modified_called_method[0], "class_name": modified_called_method[1], "method_name": modified_called_method[2]}

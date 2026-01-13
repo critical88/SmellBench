@@ -307,9 +307,11 @@ def collect_code_blocks(case: Dict, use_code_agent:bool=False) -> List[str]:
     value = case['before_refactor_code']
     blocks: List[str] = []
     for i, item in enumerate(value):
-        code = f"####{i+1}\n`module_path:{item['module_path']}`, `class_name={item['class_name']}`, `method_name={item['method_name']}`"
-        if not use_code_agent:
-            code += "\nthe related code is: \n```python\n{item['code']}\n```"
+        code = f"####{i+1}\n"
+        if use_code_agent:
+            code += "`module_path:{item['module_path']}`, `class_name={item['class_name']}`, `method_name={item['method_name']}`"
+        else:
+            code += f"\nthe related code is: \n```python\n{item['code']}\n```"
         blocks.append(code)
     return blocks
 
@@ -328,7 +330,7 @@ def build_prompt(case: Dict[str, Any], use_code_agent=False, expected_callees=[]
         system=SYSTEM_PROMPT,
         instructions=instruction.strip(),
         code=code_blob,
-        expected_callee_position= "\n".join(expected_callees)
+        expected_callee_position= "\n".join(expected_callees) if use_code_agent else ""
     )
 
 
@@ -900,7 +902,7 @@ class RefactorEvaluator:
         cache_dir = Path("cache")
         cache_dir = cache_dir / self.project_name
         cache_dir.mkdir(exist_ok=True)
-        cache_path = cache_dir / f"code_agent_{self.model}_{self.project_name}_{case_id}.json"
+        cache_path = cache_dir / f"code_agent_{self.model}_{self.agent_model}_{self.project_name}_{case_id}.json"
 
         if not cache_path.exists():
             return None, None
@@ -948,7 +950,7 @@ class RefactorEvaluator:
             "diff_files": diff_files,
             "diff": diff_text,
         }
-        cache_path = cache_dir / f"code_agent_{self.model}_{self.project_name}_{case_id}.json"
+        cache_path = cache_dir / f"code_agent_{self.model}_{self.agent_model}_{self.project_name}_{case_id}.json"
         if cache_path.exists():
             cache_json = json.loads(cache_path.read_text(encoding="utf-8"))
         else:
@@ -1494,9 +1496,9 @@ class RefactorEvaluator:
             return CaseResult(
                 case_id=case_id,
                 prompt_hash=prompt_hash,
-                callee_precision=callee_precision,
-                callee_recall=callee_recall,
-                callee_f1=callee_f1,
+                callee_precision=0,
+                callee_recall=0,
+                callee_f1=0,
                 match_scores=0.0,
                 test_passed=False
             )
@@ -1580,7 +1582,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--use-code-agent", action="store_true", help="Use code agent (Claude Code) instead of text-only LLM predictions.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")
-    parser.add_argument("--similarity-threshold", type=float, default=0.4, help="Similarity threshold used for F1 matching.")
+    parser.add_argument("--similarity-threshold", type=float, default=0.7, help="Similarity threshold used for F1 matching.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")
     return parser.parse_args()
 
