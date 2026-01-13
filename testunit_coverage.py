@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set
 import subprocess
 from utils import pushd
+import shlex
 
 try:
     import coverage  # type: ignore
@@ -642,9 +643,12 @@ class CoverageGraph:
                 for context in contexts:
                     if not context or not _looks_like_test_context(context):
                         continue
+                    normalized = _normalize_test_context(context)
+                    if not normalized:
+                        continue
                     for func in funcs:
-                        self.function_to_tests[func.key].add(context)
-                        self.test_to_functions[context].add(func.key)
+                        self.function_to_tests[func.key].add(normalized)
+                        # self.test_to_functions[normalized].add(func.key)
 
     def build_tree(self) -> Dict[str, MutableMapping[str, object]]:
         """Return a nested dict module→class→method with attached test leaves."""
@@ -742,10 +746,10 @@ class CoverageGraph:
                 for method, info in self.lookup.items()
                 if method in self.function_to_tests
             },
-            "tests": {
-                test: sorted(functions)
-                for test, functions in self.test_to_functions.items()
-            },
+            # "tests": {
+            #     test: sorted(functions)
+            #     for test, functions in self.test_to_functions.items()
+            # },
         }
         if self.class_lookup:
             payload["classes"] = {
@@ -766,7 +770,15 @@ def _looks_like_test_context(name: str) -> bool:
     return "::" in name and not name.startswith("pytest:")
 
 
-def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileFunctionIndex], Dict[str, FunctionInfo], Dict[str, ClassInfo]]:
+def _normalize_test_context(name: str) -> str:
+    """Strip parameter details (``[]``) from pytest nodeids to deduplicate variants."""
+    if not name:
+        return ""
+    bracket = name.find("[")
+    return name[:bracket] if bracket != -1 else name
+
+
+def build_function_index(src_root: Path, project_name) -> tuple[Dict[Path, FileFunctionIndex], Dict[str, FunctionInfo], Dict[str, ClassInfo]]:    
     """Walk the source tree and build lookup tables for every function and class definition."""
     file_index: Dict[Path, FileFunctionIndex] = {}
     function_lookup: Dict[str, FunctionInfo] = {}
@@ -849,11 +861,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Path to the click project. Defaults to ../project relative to this file.",
     )
     parser.add_argument(
-        "--tests-path",
-        default=".",
-        help="Path (relative to project root) where pytest tests live. Default: tests",
-    )
-    parser.add_argument(
         "--pytest-arg",
         action="append",
         default=[],
@@ -900,7 +907,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
     src_root = (project_root / args.src_path).resolve()
-    tests_path = Path(args.tests_path)
+    
     output_dir = Path("output") / args.project_name
     os.makedirs(output_dir, exist_ok=True)
     output_json = output_dir / "function_testunit_mapping.json"
@@ -912,18 +919,19 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     cov = coverage.Coverage(branch=True, source=[str(src_root)])
     cov.erase()
     plugin = CoverageContextPlugin(cov)
-
-    pytest_args = [str(tests_path)]
+        
+    pytest_args = []
     if args.pytest_args:
-        pytest_args.extend(args.pytest_args)
-    if args.test_ignore:
-        pytest_args.extend([f'--ignore={p}' for p in args.test_ignore])
-
+        pytest_args.extend(shlex.split(args.pytest_args, posix=True))
+    envs = {}
+    if args.src_path != args.project_name:
+        envs["PYTHONPATH"] = str(Path(args.src_path).parent)
     exit_code = 0
     with pushd(project_root):
         subprocess.run(['git', 'reset', '--hard', commit_id], cwd=".", check=True)
         subprocess.run(['git', 'clean', '-fd'], cwd=".", check=True)
-        subprocess.run(['pip', 'install', '-e', '.'], cwd=".", check=True)
+        build_cmd = shlex.split(args.build_cmd, posix=False)
+        subprocess.run(build_cmd, cwd=".", check=True)
         cov.start()
         try:
             exit_code = pytest.main(pytest_args, plugins=[plugin])
@@ -933,8 +941,8 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
     if exit_code != 0:
         message = f"pytest exited with status {exit_code}."
-        if not args.allow_failures:
-            raise SystemExit(message)
+        # if not args.allow_failures:
+        #     raise SystemExit(message)
         print(f"Warning: {message} Proceeding with partial data.", file=sys.stderr)
 
     data = cov.get_data()
@@ -947,9 +955,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         f"{len(graph.test_to_functions)} tests."
     )
     meta = {
-        "test_ignore": args.test_ignore,
         "src_path": args.src_path,
-        "commit_id": args.commit_id
+        "commit_id": args.commit_id,
+        "test_cmd": args.pytest_args,
+        "envs": envs
     }
 
     graph.export_json(output_json, meta)
@@ -985,6 +994,7 @@ if __name__ == "__main__":  # pragma: no cover
         args.project_name = repo_name
         args.src_path = repo_info['src_path'] if 'src_path' in repo_info else f'src/{repo_name}'
         args.commit_id = repo_info['commit_id'] if 'commit_id' in repo_info else 'HEAD'
-        args.test_ignore = repo_info['test_ignore'] if 'test_ignore' in repo_info else []
+        args.pytest_args = repo_info['test_cmd'] if "test_cmd" in repo_info else ""
+        args.build_cmd = repo_info['build_cmd'] if "build_cmd" in repo_info else "pip install -e ."
         main(args)
     raise SystemExit()

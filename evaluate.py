@@ -102,7 +102,6 @@ Your task is to:
 4. Search the current repository for other methods that contain similar duplicated logic and refactor them to reuse the same helper.
 5. Move the extracted helper function to an appropriate existing file or module in the repository (do not introduce unnecessary new files or classes).
 6. Update all affected caller methods to use the extracted helper function.
-7. The missing or incorrect callee method may cause the fail of test, please carefully test the project and find the proper callee methods.  
 
 Constraints:
 - You must not change the original program behavior.
@@ -112,7 +111,7 @@ Constraints:
 
 Carefully reason about code structure, duplication patterns, and file placement.
 
-You have three chances to refactor code and pass all testunit except the ignored test unit, otherwise you should quit refactoring to avoid token waste.
+IMPORTANT: Please extract the refactored code and strictly follow the callee positions.
 
 You can do the replacements and summary the replacements in the Response block
 """
@@ -134,8 +133,6 @@ Your task is to:
 
 5. If multiple caller methods are provided, apply consistent refactoring patterns where appropriate.
 
-6. The missing or incorrect callee method may cause the fail of test, please carefully test the project and find the proper callee methods.  
-
 Constraints
 
 1. Do not change the original program behavior.
@@ -156,7 +153,7 @@ Carefully reason about:
 
 3. where the helper functions should be placed to maintain code locality and clarity.
 
-You have three chances to refactor code and pass all testunit except the ignored test unit, otherwise you should quit refactoring to avoid token waste.
+IMPORTANT: Please extract the refactored code and strictly follow the callee positions.
 
 You can do the replacements and summary the replacements in the Response block
 
@@ -174,8 +171,8 @@ PROMPT_TEMPLATE = """{system}
 ### Code Snippets
 {code}
 
-### Test Ignore
-{test_ignore}
+### Expected Callee Positions
+{expected_callee_position}
 ### Response
 """
 
@@ -317,7 +314,7 @@ def collect_code_blocks(case: Dict, use_code_agent:bool=False) -> List[str]:
     return blocks
 
 
-def build_prompt(case: Dict[str, Any], use_code_agent=False, test_ignore=[]) -> str:
+def build_prompt(case: Dict[str, Any], use_code_agent=False, expected_callees=[]) -> str:
     code_sections = collect_code_blocks(case, use_code_agent)
     code_blob = "\n\n".join(code_sections)
     instruction = DEFAULT_AGENT_PROMPT if use_code_agent else DEFAULT_USER_INSTRUCTION
@@ -331,7 +328,7 @@ def build_prompt(case: Dict[str, Any], use_code_agent=False, test_ignore=[]) -> 
         system=SYSTEM_PROMPT,
         instructions=instruction.strip(),
         code=code_blob,
-        test_ignore="\n".join(test_ignore)
+        expected_callee_position= "\n".join(expected_callees)
     )
 
 
@@ -765,7 +762,8 @@ class RefactorEvaluator:
         self.cases = data['refactor_codes']
         self.settings = data['settings']
         self.src_path = self.settings['src_path']
-        self.test_ignore = self.settings.get('test_ignore', [])
+        self.test_cmd = self.settings.get('test_cmd', "")
+        self.envs = self.settings.get("envs", {})
         self.output_dir = Path(args.output_dir) / self.project_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -773,7 +771,7 @@ class RefactorEvaluator:
         self.verbose = args.verbose
         self.use_code_agent = args.use_code_agent
         self.model = args.model
-        self.code_agent_command = create_agent_command(self.model)
+        self.code_agent_command, self.agent_model = create_agent_command(self.model)
         self.llm_client: Optional[LLMClient] = None
 
         if not self.use_code_agent:
@@ -889,14 +887,14 @@ class RefactorEvaluator:
             capture_output=True,
         )
         if process.stdout:
-            self._log(process.stdout.strip(), level=1)
+            self._log(process.stdout.strip())
         if process.stderr:
             self._log(process.stderr.strip(), level=1)
         if process.returncode != 0:
             raise RuntimeError(
                 f"Code agent command {' '.join(command)} failed with code {process.returncode}"
             )
-        return True
+        return True, process.stdout.strip() if process.stdout else process.stderr.strip()
     def _read_cache_code_agent(self, case_id:str,
                                prompt_hash:str):
         cache_dir = Path("cache")
@@ -912,6 +910,7 @@ class RefactorEvaluator:
         payload = cache_json[prompt_hash]
         diff_text = payload['diff']
         diff_files = payload['diff_files']
+        output_text = payload.get("output_text", "")
         tmp_file = cache_dir / f"tmp_{str(uuid.uuid4())}.diff"
         tmp_file.write_text(diff_text)
         try:
@@ -922,7 +921,7 @@ class RefactorEvaluator:
         finally:
             ## delete temp files
             tmp_file.unlink()
-        return 1, (diff_files, diff_text)
+        return 1, (output_text, diff_files, diff_text)
 
         
 
@@ -930,6 +929,7 @@ class RefactorEvaluator:
         self,
         case_id: str,
         prompt_hash: str,
+        output_text: str,
         diff_text: str,
         diff_files: List[str],
     ) -> None:
@@ -941,7 +941,10 @@ class RefactorEvaluator:
         payload = {
             "case_id": case_id,
             "prompt_hash": prompt_hash,
+            "model": self.agent_model,
+            "agent": self.model,
             "project_name": self.project_name,
+            "output_text": output_text,
             "diff_files": diff_files,
             "diff": diff_text,
         }
@@ -1394,24 +1397,30 @@ class RefactorEvaluator:
             is_cached, cached_info = self._read_cache_code_agent(case_id, prompt_hash)
             if is_cached:
                 self._log("reading cache")
-                diff_files, diff_text = cached_info
+                output_text, diff_files, diff_text = cached_info
+                if output_text:
+                    self._log(output_text, 1)
             else:
                 self._log("use code agent")
                 # Hide reference callees before invoking the agent to avoid data leakage.
                 removal_records = self._remove_ground_truth_callees(case)
+                
                 with disableGitTools(self.project_repo):
-                    invoke_success = self._invoke_code_agent(prompt)
+                    try:
+                        invoke_success, output_text = self._invoke_code_agent(prompt)
+                    except:
+                        invoke_success = False
                 if not invoke_success:
                     return None, False
                 # self._restore_ground_truth_callees(removal_records)
                 diff_text = self._run_git_command(["diff"]).stdout
                 diff_output = self._run_git_command(["diff", "--name-only"]).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
-                self._cache_code_agent_diff(case_id, prompt_hash, diff_text, diff_files)
+                self._cache_code_agent_diff(case_id, prompt_hash, output_text, diff_text, diff_files)
             self._log("parsing predictions")
             prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
             self._log("running testunit")
-            success, output = run_project_tests(os.path.join(self.project_path, self.project_name), self.src_path, case["testsuites"], ignore_test=self.test_ignore)
+            success, output = run_project_tests(os.path.join(self.project_path, self.project_name), case["testsuites"], envs=self.envs, test_cmd=self.test_cmd)
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
@@ -1442,10 +1451,11 @@ class RefactorEvaluator:
     def _process_case(self, case_id: str, case: Dict[str, Any]) -> CaseResult:
         # if case['type'] == 'LongMethod':
         #     return
-        prompt = build_prompt(case, self.use_code_agent, self.test_ignore)
-        prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
-
         ground_truth = parse_ground_truth(case)
+        callees = [f"module_path={c.meta['position']['module_path']}, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
+
+        prompt = build_prompt(case, self.use_code_agent, expected_callees=callees)
+        prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
         if self.use_code_agent:
             prediction, success = self._run_code_agent_workflow(case_id, case, prompt, prompt_hash)
             if prediction is None:
@@ -1461,7 +1471,8 @@ class RefactorEvaluator:
                 caller_file_content=caller_content,
                 project_dir=self.project_path,
                 commit_hash=case['commit_hash'],
-                ignore_test=self.test_ignore
+                envs=self.envs,
+                test_cmd=self.test_cmd
             )
         filtered_prediction_callees = filter_prediction_callees(prediction.callee_segments, ground_truth['local_callees'])
         callee_matches = match_segments(
@@ -1487,7 +1498,7 @@ class RefactorEvaluator:
                 callee_recall=callee_recall,
                 callee_f1=callee_f1,
                 match_scores=0.0,
-                test_passed=success
+                test_passed=False
             )
 
             

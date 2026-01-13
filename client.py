@@ -11,23 +11,24 @@ from dotenv import load_dotenv
 CODE_AGENT_COMMAND_MAPPING = {
     # --disallowedTools 'Bash(git:*)'
     "claude_code": "claude -p --model {model} --permission-mode acceptEdits",
-    "qwen_code": "qwen -p --model {model} --approval-mode auto-edit",
+    "qwen_code": "qwen -p --model {model} --approval-mode yolo",
 }
 
 
-def create_agent_command(model):
+def create_agent_command(agent):
     from dotenv import load_dotenv
     load_dotenv()
-    if model in CODE_AGENT_COMMAND_MAPPING:
-        command = CODE_AGENT_COMMAND_MAPPING[model]
-        if model == "claude_code":
-            claude_model = os.getenv('CLAUDE_MODEL')
-            command = command.format(model=claude_model)
-        elif model == "qwen_code":
-            qwen_model = os.getenv("QWEN_CODE_MODEL")
-            command = command.format(model=qwen_model)
-        return command
-    return None
+    model = None
+    if agent in CODE_AGENT_COMMAND_MAPPING:
+        command = CODE_AGENT_COMMAND_MAPPING[agent]
+        if agent == "claude_code":
+            model = os.getenv('CLAUDE_MODEL')
+            command = command.format(model=model)
+        elif agent == "qwen_code":
+            model = os.getenv("QWEN_CODE_MODEL")
+            command = command.format(model=model)
+        return command, model
+    return None, None
 
 @dataclass
 class LLMResponse:

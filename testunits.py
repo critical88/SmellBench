@@ -5,6 +5,7 @@ from pathlib import Path
 import argparse
 from utils import pushd, _log, DEBUG_LOG_LEVEL
 from tqdm import tqdm
+import shlex
 
 def reset_repository(repo_path, commit_hash=None):
     """Reset the git repository to its latest state"""
@@ -28,7 +29,7 @@ def replace_file_content(file_path, new_content):
         print(f"Error replacing file {file_path}: {e}")
         return False
     
-def run_project_tests(project_path, src_path, test_file_paths, ignore_test=[]):
+def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
     """Run the project's test suite"""
     
     try:
@@ -37,18 +38,38 @@ def run_project_tests(project_path, src_path, test_file_paths, ignore_test=[]):
         # Then run tests
         with pushd(project_path):
             env = os.environ.copy()
-            env['PYTHONPATH'] = str(Path(src_path).parent)
+            for k, v in envs.items():
+                env[k] = v
+            batch_size = 300
+            i = 0
+            test_len = len(test_file_paths)
+            if test_len > 10000:
+                ## run all test 
+                return None, None
+            while(i >= 0 and batch_size * i < test_len):
+                cmd = []
+                if test_cmd:
+                    cmd.extend(shlex.split(test_cmd, posix=True))
+                
+                cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
+                i += 1
+                result = subprocess.run(['pytest','-x'] + cmd, cwd='.', capture_output=True, text=True, env=env)
+                if result.returncode != 0:
+                    return False, result.stdout
+                
+            return True, result.stdout
 
-            test_func = [] if len(test_file_paths) > 100 else test_file_paths
-            if ignore_test:
-                test_func.extend([f'--ignore={p}' for p in ignore_test])
-            result = subprocess.run(['pytest','-x'] + test_func, cwd='.', capture_output=True, text=True, env=env)
+
+            # test_func = [] if len(test_file_paths) > 100 else test_file_paths
+            # if ignore_test:
+            #     test_func.extend([f'--ignore={p}' for p in ignore_test])
+            # result = subprocess.run(['pytest','-x'] + test_func, cwd='.', capture_output=True, text=True, env=env)
         return result.returncode == 0, result.stdout
     except subprocess.CalledProcessError as e:
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content=None, ignore_test=[], project_dir="../project", commit_hash=None, verbose=False):
+def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content=None, test_cmd="", envs={}, project_dir="../project", commit_hash=None, verbose=False):
     # Define paths
     base_project_path = project_dir
     module_path = os.path.normpath(src_path).split(os.sep)[-1]
@@ -74,7 +95,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
                 return False
 
     # Run tests
-    success, output = run_project_tests(project_path, src_path, test_file_paths, ignore_test)
+    success, output = run_project_tests(project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
     if success:
         # print(f"Tests passed for {project_name}")
         _log(f"Tests passed for {project_name}")
@@ -111,7 +132,8 @@ def process_refactoring(project_name):
         return False
 
     src_path = settings.get("src_path", "")
-    ignore_test = settings.get("test_ignore", [])
+    test_cmd = settings.get("test_cmd", "")
+    envs = settings.get("envs", {})
     # Process each refactoring
     successed_refactor_data = []
     for refactor_item in tqdm(refactor_data, desc="testing cases..."):
@@ -120,7 +142,8 @@ def process_refactoring(project_name):
             src_path=src_path, 
             testsuites=refactor_item['testsuites'], 
             caller_file_content=refactor_item['caller_file_content'],
-            ignore_test=ignore_test
+            envs=envs,
+            test_cmd=test_cmd
         )
         
         if success:

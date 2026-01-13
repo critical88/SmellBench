@@ -697,6 +697,8 @@ class BaseCollector():
             return None
         if caller['caller_start_line'] > caller['line_number']:
             return None
+        if caller['position'] == callee['position']:
+            return None
         ret = self._generate_replace_caller_from_callee(caller, callee, all_class_parents)
         return ret
     

@@ -1,0 +1,15 @@
+-r requirements.txt
+# requests
+pytest-httpbin
+PySocks
+# urllib3
+trustme
+trio
+quart
+quart_trio
+pytest-timeout
+# pydantic-1.0
+pytest-mock
+pytest-benchmark
+hypothesis
+pydantic[email]

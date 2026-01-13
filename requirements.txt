@@ -1,22 +1,8 @@
-pytest==7.4
+pytest>=7.4
 coverage
 dotenv
 openai
 dashscope
 unidiff
-CodeBLEU
-tree-sitter-python==0.21.0
-# requests
-pytest-httpbin
-PySocks
-# urllib3
-trustme
-trio
-quart
-quart_trio
-pytest-timeout
-# pydantic-1.0
-pytest-mock
-pytest-benchmark
-hypothesis
-pydantic[email]
+codebleu
+tree-sitter-python @ git+https://github.com/tree-sitter/tree-sitter-python@v0.21.0

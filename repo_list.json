@@ -10,10 +10,7 @@
     },
     "requests": {
         "url": "https://github.com/psf/requests.git",
-        "commit_id": "b25c87d7cb8d6a18a37fa12442b5f883f9e41741",
-        "test_ignore": [
-            
-        ]
+        "commit_id": "b25c87d7cb8d6a18a37fa12442b5f883f9e41741"
     },
     "urllib3": {
         "url": "https://github.com/urllib3/urllib3.git",
@@ -33,6 +30,13 @@
         "url": "https://github.com/fastapi/fastapi.git",
         "commit_id": "b1d9769f97295a238df8c2d318ad65dd6a40c6ff",
         "src_path": "fastapi",
-        "test_ignore": ["tests/test_tutorial"]
+        "test_cmd": "--ignore=tests/test_tutorial"
+    },
+    "pandas":{
+        "url":"https://github.com/pandas-dev/pandas",
+        "commit_id":"9c8bc3e55188c8aff37207a74f1dd144980b8874",
+        "src_path":"pandas",
+        "test_cmd": "-m \"not slow and not network and not db\"",
+        "build_cmd": "python -m pip install -ve . --no-build-isolation"
     }
 }

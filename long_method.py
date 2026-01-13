@@ -36,7 +36,7 @@ class LongMethodCollector(BaseCollector):
             if not os.path.exists(caller_file):
                 continue
             # 统计该调用者调用的所有方法的总行数
-            before_refactor_code = []
+            
             caller_method_definition = self.all_definitions.get(caller_method)
             if caller_method_definition is None:
                 continue
@@ -44,11 +44,15 @@ class LongMethodCollector(BaseCollector):
             caller_len = self._normalized_function_length(caller_source)
             if caller_len < 5:
                 continue
-
+            
+            # for _ in range(2):
+            before_refactor_code = []
             after_refactor_code = [{"type": "caller", "code": caller_source, "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}]
             testsuites = self._find_related_testsuite(caller_method)
             replacements = []
             for called_method, caller_locations in callee_methods.items():
+                if called_method == caller_method:
+                    continue
                 # 获取被调用方法, 由于存在重载问题， 需要进行多次查找
                 definition, modified_called_method = self._find_callee(called_method, self.all_definitions, all_class_parents)
                 if definition is None:
