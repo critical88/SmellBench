@@ -5,6 +5,7 @@ import textwrap
 import ast
 import shutil
 import logging
+import uuid
 
 INFO_LOG_LEVEL=logging.INFO
 DEBUG_LOG_LEVEL=logging.DEBUG
@@ -22,7 +23,8 @@ def pushd(path: Path):
 @contextlib.contextmanager
 def disableGitTools(project_path: Path):
     git_dir = project_path / ".git"
-    tmp_dir = project_path.parent / "tmp_repo"
+    str(uuid)
+    tmp_dir = project_path.parent / str(uuid.uuid4())
     dest_dir = tmp_dir / ".git"
     os.makedirs(tmp_dir, exist_ok=True)
     move = False
@@ -34,6 +36,7 @@ def disableGitTools(project_path: Path):
     finally:
         if dest_dir.exists() and move:
             shutil.move(dest_dir, git_dir)
+        os.removedirs(tmp_dir)
 
 def _log(text, level=INFO_LOG_LEVEL):
     logging.log(level, text)

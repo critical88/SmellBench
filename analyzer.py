@@ -590,8 +590,6 @@ class MethodAnalyzer():
 
         return family_classes
     
-    
-        
 
     def find_refactor_codes(self) -> List[Tuple[Tuple[str, str, str], int, Dict]]:
         project_path = os.path.join(self.project_path, self.project_name)
