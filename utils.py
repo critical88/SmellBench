@@ -6,6 +6,7 @@ import ast
 import shutil
 import logging
 import uuid
+import hashlib
 
 INFO_LOG_LEVEL=logging.INFO
 DEBUG_LOG_LEVEL=logging.DEBUG
@@ -42,7 +43,9 @@ def _log(text, level=INFO_LOG_LEVEL):
     logging.log(level, text)
     
 
-        
+
+def hashcode(text: str) -> str:
+    return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 
 def strip_python_comments(text: str) -> str:

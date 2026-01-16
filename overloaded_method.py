@@ -177,7 +177,7 @@ class OverloadedMethodCollector(BaseCollector):
                 continue
 
             for caller_module, replacements in caller_replacement_dict.items():
-                before_refactors, caller_lines = self.do_replacement(replacements, caller_module, all_definitions)
+                before_refactors, caller_lines = self.do_replacement(replacements, caller_module)
                 if before_refactors:
                     before_refactor_code.extend(before_refactors)
                     caller_file_contents.append(

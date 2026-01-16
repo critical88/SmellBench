@@ -1,7 +1,7 @@
 import ast
 import os
 from collections import defaultdict
-from typing import Dict, Set, Tuple, List
+from typing import Dict, Set, Tuple, List, Optional
 from long_method import LongMethodCollector
 from duplicated_method import DuplicatedMethodCollector
 from overloaded_method import OverloadedMethodCollector
@@ -10,6 +10,7 @@ import json
 import traceback
 import subprocess
 from utils import pushd, _log, DEBUG_LOG_LEVEL
+from pathlib import Path
 
 class MethodCallVisitor(ast.NodeVisitor):
     def __init__(self, 
@@ -202,6 +203,9 @@ class MethodCallVisitor(ast.NodeVisitor):
             # 忽略带有@typing.overload装饰器的方法
         if self.is_typing_overload(node):
             return
+        ## add current file methods
+        if self.current_class is None:
+            self.imports[method_name] = self.module_path
 
         if self.current_class:
             class_key = (self.module_path, self.current_class)
@@ -219,9 +223,11 @@ class MethodCallVisitor(ast.NodeVisitor):
         self.variable_types_stack.pop()
         self.current_method = old_method
     def module_exists(self, module_path):
-        return os.path.exists(os.path.join(self.project_path, self.src_path, module_path.replace(".", os.sep) + ".py"))
-        # return os.path.exists(os.path.join(self.project_path, module_path.replace(".", os.sep) + ".py"))
-    
+        prefix_path = Path(self.project_path) / self.project_name / self.src_path
+        prefix_path = prefix_path.parent
+        _path = prefix_path / (module_path.replace(".", os.sep) + ".py")
+        return os.path.exists(_path)
+        
     def is_module_directory(self, module_path):
         return os.path.exists(os.path.join(self.project_path, module_path.replace(".", os.sep)))
     
@@ -501,7 +507,7 @@ class MethodFilter():
         return True
     
 class MethodAnalyzer():
-    def __init__(self, project_name: str,  project_path: str):
+    def __init__(self, project_name: str,  project_path: str, long_method_depth: Optional[int] = 1):
         
         meta_info, all_classes, self.class_parent, self.function_testunit, function_variables = self._read_meta_info(project_name)
         self.meta_info = meta_info
@@ -512,6 +518,7 @@ class MethodAnalyzer():
         self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
         self.package_root = os.path.dirname(project_path)
         self.visitor = MethodCallVisitor(project_path, project_name, src_path, all_classes, self.class_parent, function_variables)
+        self.long_method_depth = long_method_depth
 
     def _read_meta_info(self, project_name):
         testunit_file = os.path.join("output", project_name, f"function_testunit_mapping.json")
@@ -632,8 +639,17 @@ class MethodAnalyzer():
 
         
         collectors: List[BaseCollector] = [
-            LongMethodCollector(self.project_path, self.project_name, self.src_path, all_definitions),
-            DuplicatedMethodCollector(self.project_path, self.project_name, self.src_path, all_definitions),
+            LongMethodCollector(project_path=self.project_path, 
+                                project_name=self.project_name, 
+                                src_path=self.src_path, 
+                                all_definitions=all_definitions, 
+                                family_classes=family_classes, 
+                                max_inline_depth=self.long_method_depth),
+            DuplicatedMethodCollector(project_path=self.project_path, 
+                                    project_name=self.project_name, 
+                                    src_path=self.src_path, 
+                                    all_definitions=all_definitions, 
+                                    family_classes=family_classes),
             # OverloadedMethodCollector(self.project_path, self.project_name, self.src_path)
         ]
         result = {}
@@ -645,8 +661,7 @@ class MethodAnalyzer():
         stat = {}
         for collector in collectors:
             ret = collector.collect(all_calls=all_calls, 
-                                    all_class_parents=all_class_parents,
-                                    family_classes=family_classes)
+                                    all_class_parents=all_class_parents)
             refactored_count += len(ret)
             filtered_ret = []
             for r in ret:

@@ -64,7 +64,7 @@ def main(args):
     print(f"Python version: {sys.version}")
     print(f"Current working directory: {os.getcwd()}")
     print(f"\nAnalyzing codebase: {project_lib}")
-    analyzer = MethodAnalyzer(project_name, project_path)
+    analyzer = MethodAnalyzer(project_name, project_path, long_method_depth=args.long_method_depth)
     
     result = analyzer.find_refactor_codes()
     
@@ -102,6 +102,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
+    parser.add_argument("--long-method-depth", type=int, default=1, help="Max callee layers to inline for long-method expansion (None means unlimited).")
     return parser.parse_args()
 
 

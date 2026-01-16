@@ -10,7 +10,7 @@ from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL
 
 
 class BaseCollector():
-    def __init__(self, project_path:str, project_name:str, src_path:str, all_definitions:Dict[Tuple, Dict]) -> None:
+    def __init__(self, project_path:str, project_name:str, src_path:str, all_definitions:Dict[Tuple, Dict], family_classes) -> None:
         """
         Docstring for __init__
         
@@ -32,12 +32,26 @@ class BaseCollector():
         self.src_path = src_path
         self.file_cache = {}
         self.all_definitions = all_definitions
+        self.family_classes = family_classes
         self.language = "python"
         self._init_llm_client()
         self._init_testunit()
 
     def name(self):
         raise NotImplementedError()
+    
+    def is_method_overload(self, method_key: Tuple) -> bool:
+        module_name, class_name, method_name = method_key
+        if class_name is None:
+            return False
+        
+        for family_class in self.family_classes.get((module_name, class_name), set()):
+            if family_class[1] == class_name and family_class[0] == module_name:
+                continue
+            if (family_class[0], family_class[1], method_name) in self.all_definitions:
+                return True
+        
+        return False
 
     def _init_testunit(self):
         testunit_file = os.path.join("output", self.project_name, f"function_testunit_mapping.json")
@@ -705,23 +719,17 @@ class BaseCollector():
         ret = self._generate_replace_caller_from_callee(caller, callee, all_class_parents)
         return ret
     
-    def do_replacement(self, replacements_dict: Dict[Tuple, Dict], caller_module, all_definitions):
-        caller_file = self.get_file_from_module(caller_module)
-        caller_content, caller_tree = self._read_file(caller_file)
-        # 分析调用者的文件
-        caller_lines = caller_content.splitlines()
-        before_refactor_code = []
+    def rearrange_caller_replacement(self, replacements_dict: Dict[Tuple, Dict])->Tuple[List[Dict], List]:
         imports = []
         caller_replacements = []
         for caller_method, replacements in replacements_dict.items():
-            caller_method_definition = all_definitions[caller_method]
+            caller_method_definition = self.all_definitions[caller_method]
             caller_method_definition_lines = caller_method_definition['source'].splitlines()
             modified_len = 0
             for replacement in sorted(replacements, key=lambda x: x['start'], reverse=True):
                 caller_method_definition_lines[replacement['rel_start']:replacement['rel_end']] = replacement['replacement']
                 imports.extend(replacement['imports'])
                 modified_len += len(replacement['replacement']) - (replacement['rel_end'] - replacement['rel_start'])
-            total_callee_lines = sum([len(r['replacement']) for r in replacements])
             
             caller_replacements.append({
                 "caller_start": caller_method_definition['start_line'], 
@@ -730,6 +738,16 @@ class BaseCollector():
                 "modified_method_lines": caller_method_definition_lines,
                 "modified_len": modified_len,
                 })
+        
+        return caller_replacements, imports
+
+    def _do_caller_replacement(self, caller_replacements: List[Dict], imports:List, caller_module):
+        caller_file = self.get_file_from_module(caller_module)
+        caller_content, _ = self._read_file(caller_file)
+        # 分析调用者的文件
+        caller_lines = caller_content.splitlines()
+        before_refactor_code = []
+
         last_import_line = self._get_last_import_line(caller_file)
         statements = self._convert_imports_to_statements(imports, caller_file)
 
@@ -759,6 +777,11 @@ class BaseCollector():
             caller_lines.insert(last_import_line + 1, stat)
         
         return before_refactor_code, caller_lines
+    def do_replacement(self, replacements_dict: Dict[Tuple, Dict], caller_module):
+        
+        caller_replacements, imports = self.rearrange_caller_replacement(replacements_dict)
+        
+        return self._do_caller_replacement(caller_replacements, imports, caller_module)
         
     def _replace_caller_from_callee_gpt(self, caller, callee):
         ## 处理Import的问题

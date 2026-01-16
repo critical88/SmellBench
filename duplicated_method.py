@@ -10,11 +10,11 @@ from tqdm import tqdm
 
 
 class DuplicatedMethodCollector(BaseCollector):
-    def __init__(self, project_path, project_name, src_path, all_definitions) -> None:
-        super().__init__(project_path, project_name, src_path, all_definitions)
+    def __init__(self, project_path, project_name, src_path, all_definitions, family_classes) -> None:
+        super().__init__(project_path, project_name, src_path, all_definitions, family_classes)
 
     def name(self):
-        return "duplicated"
+        return "Duplicated"
 
     def get_callee_mapping(self, all_calls):
         # 按callee调用组织方法调用信息 
@@ -35,7 +35,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 callee_mapping[(called_module, called_class, called_method_name)].append({"position": (module_path, class_name, caller_method_name), "call_locations": call_locations})
         
         return callee_mapping
-    def collect(self, all_calls, all_class_parents, family_classes):
+    def collect(self, all_calls, all_class_parents):
         """
         @param class_methods: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}
         @param all_calls: {(caller_method): {(called_method): [(module_path, class_name, call_locations)]}}
@@ -145,7 +145,7 @@ class DuplicatedMethodCollector(BaseCollector):
 
             for caller_module, caller_replacements in selected_replacements.items():
 
-                before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module, self.all_definitions)
+                before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module)
                 before_refactor_code.extend(before_refactors)
 
                 caller_file_contents.append({
@@ -157,7 +157,7 @@ class DuplicatedMethodCollector(BaseCollector):
             if len(before_refactor_code) == 0:
                 continue
             duplicated_methods.append({
-                "type": "DuplicatedMethod",
+                "type": self.name(),
                 "meta":{"calling_times": valid_calling_times, "num_caller": len(selected_callers) , "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,

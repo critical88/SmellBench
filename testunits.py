@@ -83,27 +83,29 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
     if not reset_repository(project_path, commit_hash):
         print(f"Project reset failed")
         return False
-
-    test_file_paths = testsuites
-    if caller_file_content is not None:
-        for code_item in caller_file_content:
-            module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
-            file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
-            success = replace_file_content(file_path, code_item.get('code', ''))
-            if not success:
-                print(f"Failed to replace file {file_path}")
-                return False
-
-    # Run tests
-    success, output = run_project_tests(project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
-    if success:
-        # print(f"Tests passed for {project_name}")
-        _log(f"Tests passed for {project_name}")
-        return True
-    else:
-        _log(f"Tests failed for {project_name}")
-        _log(f"Output: {output}")
-        return False
+    try:
+        test_file_paths = testsuites
+        if caller_file_content is not None:
+            for code_item in caller_file_content:
+                module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
+                file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
+                success = replace_file_content(file_path, code_item.get('code', ''))
+                if not success:
+                    print(f"Failed to replace file {file_path}")
+                    return False
+        # Run tests
+        success, output = run_project_tests(project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
+    
+        if success:
+            # print(f"Tests passed for {project_name}")
+            _log(f"Tests passed for {project_name}")
+            return True
+        else:
+            _log(f"Tests failed for {project_name}")
+            _log(f"Output: {output}")
+            return False
+    finally:
+        reset_repository(project_path, commit_hash)
 
 def process_refactoring(project_name):
     # Define paths
