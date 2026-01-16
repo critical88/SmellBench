@@ -664,11 +664,18 @@ class MethodAnalyzer():
                                     all_class_parents=all_class_parents)
             refactored_count += len(ret)
             filtered_ret = []
+            stat_ret = defaultdict(int)
             for r in ret:
                 if len(r['testsuites']) > 0:
                     r['commit_hash'] = commit_hash
                     filtered_ret.append(r)
-            stat[collector.name()] = len(filtered_ret)
+                    if "key" in r['meta']:
+                        key = r['meta']['key']
+                        stat_ret[key] += 1
+            stat[collector.name()] = {
+                "total": len(filtered_ret),
+                **stat_ret
+            }
             refactor_codes.extend(filtered_ret)
         
         result['refactor_codes'] = refactor_codes

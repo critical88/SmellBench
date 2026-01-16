@@ -92,9 +92,16 @@ def main(args):
     print(f"Number of refactors with testunits: {result['stat']['refactor_with_test_num']}")
     print("Number of refactor_codes splits: " + str(result['stat']['split']))
     print("Number of passed refactors:", len(passed_refactors))
-    stat = defaultdict(int)
+    stat = defaultdict(dict)
     for refactor in passed_refactors:
-        stat[refactor['type']] += 1
+        if 'total' not in stat[refactor['type']]:
+            stat[refactor['type']]['total'] = 0
+        stat[refactor['type']]['total']+=1
+        if "key" in refactor['meta']:
+            if refactor['meta']['key'] not in stat[refactor['type']]:
+                stat[refactor['type']][refactor['meta']['key']] = 0
+            stat[refactor['type']][refactor['meta']['key']] += 1
+        
     print("Number of passed refactors splits: " + str(dict(stat)))
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")

@@ -183,7 +183,7 @@ class LongMethodCollector(BaseCollector):
         if total_callee_lines > self.TOTAL_CALLEE_LENGTH_THRESHOLD:
             long_method = {
                 "type": self.name(),
-                "meta":{"depth": max_depth, "calling_times": len(replacements), "total_caller_lines": total_caller_lines, "total_callee_lines": total_callee_lines},
+                "meta":{"key": f"depth_{max_depth}", "depth": max_depth, "calling_times": len(replacements), "total_caller_lines": total_caller_lines, "total_callee_lines": total_callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
