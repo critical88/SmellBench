@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from client import LLMFactory, LLMClient, AgentClient, Client, LLMResponse, AgentResponse
 from collections import defaultdict
 from testunits import replace_and_test_caller, run_project_tests, create_test_command
-from utils import strip_python_comments, disableGitTools,_run_git_command
+from utils import strip_python_comments, disableGitTools,_run_git_command, prepare_env
 try:
     from unidiff import PatchSet
 except ImportError:
@@ -1274,7 +1274,7 @@ class RefactorEvaluator:
             self._log("parsing predictions")
             prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
             self._log("running testunit")
-            success, output = run_project_tests(os.path.join(self.project_path, self.project_name), case["testsuites"], envs=self.envs, test_cmd=self.test_cmd)
+            success, output = run_project_tests(self.project_name, os.path.join(self.project_path, self.project_name), case["testsuites"], envs=self.envs, test_cmd=self.test_cmd)
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
@@ -1286,9 +1286,11 @@ class RefactorEvaluator:
         self._log(f"Loaded {total_cases} cases from {self.data_path}")
         
         cases = []
+
         for index, case in enumerate(self.cases):
             if self.limit is not None and index >= self.limit:
                 break
+            project_name = case['name']
             case_id = case_identifier(case, index)
             self._log(f"Processing {case_id}")
             result = self._process_case(case_id, case)
@@ -1309,6 +1311,7 @@ class RefactorEvaluator:
         #     return
         # if case['meta']['depth'] == 1:
         #     return
+        project_name = case['name']
         ground_truth = parse_ground_truth(case, cascade=True)
         callees = [f"file_path={os.sep.join(c.meta['position']['module_path'].split('.'))}.py, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
         test_cmd = create_test_command(test_file_paths=case['testsuites'], test_cmd=self.test_cmd, envs=self.envs, use_envs=True) if self.args.use_test else DEFAULT_FORBID_TEST
@@ -1325,7 +1328,7 @@ class RefactorEvaluator:
             prediction = parse_model_prediction(payload["response_text"], case)
             caller_content = self._extract_content(prediction.caller_segments, case)
             success = replace_and_test_caller(
-                project_name=self.project_name,
+                project_name=project_name,
                 src_path=self.src_path,
                 testsuites=case['testsuites'],
                 caller_file_content=caller_content,

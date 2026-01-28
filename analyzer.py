@@ -668,6 +668,7 @@ class MethodAnalyzer():
             for r in ret:
                 if len(r['testsuites']) > 0:
                     r['commit_hash'] = commit_hash
+                    r['project_name'] = self.project_name
                     filtered_ret.append(r)
                     if "key" in r['meta']:
                         key = r['meta']['key']

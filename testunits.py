@@ -3,7 +3,7 @@ import os
 import subprocess
 from pathlib import Path
 import argparse
-from utils import pushd, _log, DEBUG_LOG_LEVEL
+from utils import pushd, _log, DEBUG_LOG_LEVEL, prepare_to_run, conda_exec_cmd, get_spec
 from tqdm import tqdm
 import shlex
 
@@ -29,28 +29,29 @@ def replace_file_content(file_path, new_content):
         print(f"Error replacing file {file_path}: {e}")
         return False
 
-def create_test_command(test_file_paths=[], test_cmd="", envs={}, use_envs=False):
+def create_test_command( test_file_paths=[], test_cmd="", envs=None):
     cmd = []
     if test_cmd:
         cmd.extend(shlex.split(test_cmd, posix=True))
     
     cmd.extend(test_file_paths)
-    if use_envs:
+    if envs is not None:
         cmd = [f"{k}={v}" for k, v in envs.items()] + ["pytest", "-x"] + cmd
     else:
         cmd = ["pytest", "-x"] + cmd
     return cmd
 
-def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
+def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd=""):
     """Run the project's test suite"""
+    spec = get_spec(project_name)
     try:
         # First try to install the project
         # subprocess.run(['pip', 'install', '-e', '.'], cwd=project_path, check=True)
         # Then run tests
         with pushd(project_path):
-            env = os.environ.copy()
+            exec_env = os.environ.copy()
             for k, v in envs.items():
-                env[k] = v
+                exec_env[k] = v
             # batch_size = 300
             # i = 0
             # test_len = len(test_file_paths)
@@ -64,8 +65,9 @@ def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
             
             # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
             # i += 1
-            cmd = create_test_command(test_file_paths, test_cmd=test_cmd, envs=envs)
-            result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
+            cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
+            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env)
+            # result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
             if result.returncode != 0:
                 return False, result.stdout
                 
@@ -105,7 +107,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
                     print(f"Failed to replace file {file_path}")
                     return False
         # Run tests
-        success, output = run_project_tests(project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
+        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
     
         if success:
             # print(f"Tests passed for {project_name}")
@@ -164,6 +166,7 @@ def process_refactoring(project_name):
     print("Number of successful refactorings:", len(successed_refactor_data))
     with open(success_refactor_json_path, 'w', encoding='utf-8') as f:
         json.dump({
+            "name": project_name,
             "settings": settings,
             "refactor_codes": successed_refactor_data
         }, f, indent=4)

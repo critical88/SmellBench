@@ -1003,9 +1003,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     project_root =  args.project_root / args.project_name
 
     spec = get_spec(args.project_name)
-    if not prepare_to_run(spec):
-        return False
-    
+
     current_conda_env = os.environ.get("CONDA_DEFAULT_ENV")
     target_conda_env = None
     if "env_name" in spec:
@@ -1016,6 +1014,10 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
         subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", args.project_name], text=True)
         return 
+    if not prepare_to_run(spec):
+        return False
+    
+    
     
     commit_id = args.commit_id
     if not project_root.exists():
@@ -1115,8 +1117,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 if __name__ == "__main__":  # pragma: no cover
     args = parse_args()
     repo_spec = get_spec(args.project_name)
+    repo_name = repo_spec['name']
     args.project_name = repo_spec['name']
-    args.src_path = repo_spec['src_path'] if 'src_path' in repo_spec else f'src/{repo_spec}'
+    args.src_path = repo_spec['src_path'] if 'src_path' in repo_spec else f'src/{repo_name}'
     args.commit_id = repo_spec['commit_id'] if 'commit_id' in repo_spec else 'HEAD'
     args.pytest_args = repo_spec['test_cmd'] if "test_cmd" in repo_spec else ""
     main(args)

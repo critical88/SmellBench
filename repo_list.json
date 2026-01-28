@@ -52,7 +52,8 @@
         "url": "https://github.com/scikit-learn/scikit-learn",
         "commit_id": "d3898d9d57aeb1e960d266613a2e31b07bca39d7",
         "src_path": "sklearn",
-        "install": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
-        "conda_env": "sklearn-dev"
+        "conda_env_create": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
+        "build_cmd": "pip install --editable . --verbose --no-build-isolation --config-settings editable-verbose=true",
+        "env_name": "sklearn-dev"
     }
 }

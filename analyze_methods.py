@@ -78,6 +78,7 @@ def main(args):
     with open(os.path.join(output_base, 'refactor_codes.json'), 'w', encoding='utf-8') as f:
         settings = analyzer.meta_info
         saved_json = {
+            "name": project_name,
             "settings": settings,
             "refactor_codes": refactor_codes
         }
@@ -109,7 +110,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     parser.add_argument("--project-name", default="click", help="Project name")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
-    parser.add_argument("--long-method-depth", type=int, default=1, help="Max callee layers to inline for long-method expansion (None means unlimited).")
+    parser.add_argument("--long-method-depth", type=int, default=3, help="Max callee layers to inline for long-method expansion (None means unlimited).")
     return parser.parse_args()
 
 
