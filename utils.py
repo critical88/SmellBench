@@ -24,8 +24,7 @@ def pushd(path: Path):
 @contextlib.contextmanager
 def disableGitTools(project_path: Path):
     git_dir = project_path / ".git"
-    str(uuid)
-    tmp_dir = project_path.parent / str(uuid.uuid4())
+    tmp_dir = project_path.parent / f"{project_path.name}_{str(uuid.uuid4())}"
     dest_dir = tmp_dir / ".git"
     os.makedirs(tmp_dir, exist_ok=True)
     move = False

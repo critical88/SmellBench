@@ -32,6 +32,10 @@ class LongMethodCollector(BaseCollector):
         if caller_method_definition is None:
             return 
         
+        caller_len = self._normalized_function_length(caller_method_definition['source'])
+        if caller_len < 3:
+            return
+        
         callee_methods = all_calls.get(method_key, {})
         caller_module = method_key[0]
         caller_file = self.get_file_from_module(caller_module)
@@ -50,14 +54,15 @@ class LongMethodCollector(BaseCollector):
             
             sub_source = self._expand_method_source(root_caller_method, modified_called_method, all_calls, all_class_parents, depth + 1, max_depth)
             if sub_source is not None:
-                callee_source = sub_source[0]
+                callee_source, sub_callees = sub_source[0], sub_source[2][0]['callees']
             else:
                 callee_source = definition['source']
+                sub_callees = []
             callee_len = self._normalized_function_length(callee_source)
             if callee_len < 5:
                 continue
             callee_file = self.get_file_from_module(modified_called_method[0])
-            callee = {"source": callee_source, 'decorators': definition['decorators'], "file": callee_file }
+            callee = {"source": callee_source, 'decorators': definition['decorators'], "file": callee_file}
             callee['position'] = {"module_path": modified_called_method[0], "class_name": modified_called_method[1], "method_name": modified_called_method[2]}
             callee_testsuites = self._find_related_testsuite(called_method)
             if len(callee_testsuites) > 3:
@@ -86,6 +91,7 @@ class LongMethodCollector(BaseCollector):
                                 "start": caller_replacement['start'], 
                                 "end": caller_replacement['end'], 
                                 "code": callee_source, 
+                                "callees": sub_callees,
                                 'position': callee['position']})
             if len(replacements) >= self.MINIMAL_CALLEE_NUM:
                 if sub_source is not None:

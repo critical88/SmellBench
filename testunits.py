@@ -28,10 +28,21 @@ def replace_file_content(file_path, new_content):
     except Exception as e:
         print(f"Error replacing file {file_path}: {e}")
         return False
+
+def create_test_command(test_file_paths=[], test_cmd="", envs={}, use_envs=False):
+    cmd = []
+    if test_cmd:
+        cmd.extend(shlex.split(test_cmd, posix=True))
     
+    cmd.extend(test_file_paths)
+    if use_envs:
+        cmd = [f"{k}={v}" for k, v in envs.items()] + ["pytest", "-x"] + cmd
+    else:
+        cmd = ["pytest", "-x"] + cmd
+    return cmd
+
 def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
     """Run the project's test suite"""
-    
     try:
         # First try to install the project
         # subprocess.run(['pip', 'install', '-e', '.'], cwd=project_path, check=True)
@@ -40,22 +51,23 @@ def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
             env = os.environ.copy()
             for k, v in envs.items():
                 env[k] = v
-            batch_size = 300
-            i = 0
-            test_len = len(test_file_paths)
+            # batch_size = 300
+            # i = 0
+            # test_len = len(test_file_paths)
             # if test_len > 300:
             #     ## run all test 
             #     return None, None
-            while(i >= 0 and batch_size * i < test_len):
-                cmd = []
-                if test_cmd:
-                    cmd.extend(shlex.split(test_cmd, posix=True))
-                
-                cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
-                i += 1
-                result = subprocess.run(['pytest','-x'] + cmd, cwd='.', capture_output=True, text=True, env=env)
-                if result.returncode != 0:
-                    return False, result.stdout
+            # while(i >= 0 and batch_size * i < test_len):
+            # cmd = []
+            # if test_cmd:
+            #     cmd.extend(shlex.split(test_cmd, posix=True))
+            
+            # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
+            # i += 1
+            cmd = create_test_command(test_file_paths, test_cmd=test_cmd, envs=envs)
+            result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
+            if result.returncode != 0:
+                return False, result.stdout
                 
             return True, result.stdout
 

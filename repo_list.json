@@ -21,11 +21,6 @@
         "commit_id": "15206881c006c79667fe5154fe80c01c65410679",
         "src_path": "src/jinja2"
     },
-    "pydantic": {
-        "url": "https://github.com/pydantic/pydantic.git",
-        "commit_id": "d771df98f3194ea2695a6a893e318b32381032c3",
-        "src_path": "pydantic"
-    },
     "fastapi":{
         "url": "https://github.com/fastapi/fastapi.git",
         "commit_id": "b1d9769f97295a238df8c2d318ad65dd6a40c6ff",
@@ -44,5 +39,10 @@
         "commit_id": "d00a27df750130e28e4801caaedc782433863a37",
         "src_path": "seaborn",
         "test_cmd": ""
+    },
+    "sphinx":{
+        "url":"https://github.com/sphinx-doc/sphinx",
+        "commit_id":"8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
+        "src_path": "sphinx"
     }
 }
