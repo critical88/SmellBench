@@ -120,19 +120,19 @@ def get_repo_name(spec):
         repo_name = spec['src_path'].split("/")[-1]
     return repo_name
 
-def conda_exec_cmd(cmds, spec, cwd=None, envs=None):
+def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False):
     env_name = ""
     if "env_name" in spec:
         env_name = spec['env_name']
     prefix = []
     if env_name:
-        prefix = ["conda", "run", "-n" , env_name]
+        prefix = ["conda", "run", "-n" , env_name, '--live-stream']
     
     if len(cmds) > 0:
         if isinstance(cmds[0], str):
             cmds = [cmds]
     for cmd in cmds:
-        process = subprocess.run((prefix + cmd), text=True, capture_output=True, cwd=cwd, env=envs)
+        process = subprocess.run((prefix + cmd), text=True, capture_output=capture_output, cwd=cwd, env=envs)
         if process.returncode != 0:
             return process
     return process
@@ -165,7 +165,7 @@ def install_repo(spec, project_path="../project"):
         build_cmd = spec['build_cmd']
     if isinstance(build_cmd, str):
         build_cmd = [build_cmd]
-        
+
     build_cmd = [bc.split(" ") if isinstance(bc, str) else bc for bc in build_cmd]
             
     print(f"installing {repo_name} ...")
@@ -181,8 +181,15 @@ def install_repo(spec, project_path="../project"):
 def isinstalled(spec):
     repo_name = get_repo_name(spec)
     cmd = f"pip show {repo_name}"
-    process = conda_exec_cmd(cmd.split(" "), spec)
+    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
     
+    if process.returncode == 0:
+        if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
+            return True
+    
+    repo_name = spec['name']
+    cmd = f"pip show {repo_name}"
+    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
     if process.returncode == 0:
         if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
             return True

@@ -66,7 +66,7 @@ def run_project_tests(project_name, project_path, test_file_paths, envs={}, test
             # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
             # i += 1
             cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
-            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env)
+            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True)
             # result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
             if result.returncode != 0:
                 return False, result.stdout
