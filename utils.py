@@ -165,8 +165,11 @@ def install_repo(spec, project_path="../project"):
         build_cmd = spec['build_cmd']
     if isinstance(build_cmd, str):
         build_cmd = [build_cmd]
+        
+    build_cmd = [bc.split(" ") if isinstance(bc, str) else bc for bc in build_cmd]
+            
     print(f"installing {repo_name} ...")
-    process = conda_exec_cmd(build_cmd.split(" "), spec, cwd=cwd)
+    process = conda_exec_cmd(build_cmd, spec, cwd=cwd)
     
     if isinstalled(spec):
         print(f"install {repo_name} success")

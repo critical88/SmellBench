@@ -1017,8 +1017,6 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     if not prepare_to_run(spec):
         return False
     
-    
-    
     commit_id = args.commit_id
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
