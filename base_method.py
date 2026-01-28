@@ -1081,7 +1081,8 @@ Callee:
                         # 如果通过关键字参数传入了cls
                         arg_mapping[arg_name] = actual_kwargs.get(arg_name, callee['position']['class_name'])
                     special_position = True
-                elif arg_name == 'self':
+                ## some define parameter name as 'self'
+                elif arg_name == 'self' and not isinstance(call_ast.func, ast.Name):
                     arg_mapping[arg_name] = ast.unparse(call_ast.func.value)
                 else:
                     # 普通实例方法，第一个参数是self

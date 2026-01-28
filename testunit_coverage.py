@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set
 import subprocess
 from types import CodeType, FrameType
-from utils import pushd, prepare_to_run, get_spec
+from utils import pushd, prepare_to_run, get_spec, prepare_env
 import shlex
 
 try:
@@ -782,10 +782,11 @@ def _looks_like_test_context(name: str) -> bool:
 
 def _normalize_test_context(name: str) -> str:
     """Strip parameter details (``[]``) from pytest nodeids to deduplicate variants."""
-    if not name:
-        return ""
-    bracket = name.find("[")
-    return name[:bracket] if bracket != -1 else name
+    return name
+    # if not name:
+    #     return ""
+    # bracket = name.find("[")
+    # return name[:bracket] if bracket != -1 else name
 
 
 class _DirectCallTracer:
@@ -1004,6 +1005,9 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
     spec = get_spec(args.project_name)
 
+    if not prepare_to_run(spec):
+        return False
+
     current_conda_env = os.environ.get("CONDA_DEFAULT_ENV")
     target_conda_env = None
     if "env_name" in spec:
@@ -1014,8 +1018,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
         subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", args.project_name], text=True)
         return 
-    if not prepare_to_run(spec):
-        return False
+    
     
     commit_id = args.commit_id
     if not project_root.exists():

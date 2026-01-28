@@ -103,9 +103,9 @@ def prepare_env(spec, project_path="../project"):
             conda_env_create_cmd = [conda_env_create_cmd]
         print(f"preparing {repo_name} environment  ...")
         for cmd in conda_env_create_cmd:
-            process = subprocess.run(cmd.split(" "), text=True, capture_output=True, cwd=repo_path)
-            if process.returncode == -1:
-                print(process.stderr)
+            process = subprocess.run(cmd.split(" "), input="y\n" * 10, text=True, cwd=repo_path)
+            if process.returncode != 0:
+                # print(process.stderr)
                 return False
     if is_spec_installed(spec):
         print(f"prepare {repo_name} environment success")

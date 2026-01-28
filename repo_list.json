@@ -46,7 +46,14 @@
     "sphinx":{
         "url":"https://github.com/sphinx-doc/sphinx",
         "commit_id":"8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
-        "src_path": "sphinx"
+        "src_path": "sphinx",
+        "conda_env_create": "conda create -n sphinx-dev -c conda-forge python==3.12 pytest pytest-cov defusedxml",
+        "env_name": "sphinx-dev"
+    },
+    "sympy":{
+        "url": "https://github.com/sympy/sympy",
+        "commit_id": "16fa855354eb7bcabd3fe10993841e03b1382692",
+        "src_path": "sympy"
     },
     "scikit-learn":{
         "url": "https://github.com/scikit-learn/scikit-learn",
@@ -55,5 +62,12 @@
         "conda_env_create": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
         "build_cmd": "pip install --editable . --verbose --no-build-isolation --config-settings editable-verbose=true",
         "env_name": "sklearn-dev"
+    },
+    "flask":{
+        "url": "https://github.com/pallets/flask",
+        "commit_id": "2c1b30d0503cfb064f1cb252e6614a06915a362a",
+        "src_path": "src/flask",
+        "conda_env_create": "conda create -n flask-dev -c conda-forge python==3.12 pytest pytest-cov ",
+        "env_name": "flask-dev"
     }
 }
