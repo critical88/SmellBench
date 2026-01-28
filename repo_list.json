@@ -1,7 +1,8 @@
 {
     "click": {
         "url": "https://github.com/pallets/click.git",
-        "commit_id": "1d038f270701498433cb432f54db89f95f07a845"
+        "commit_id": "1d038f270701498433cb432f54db89f95f07a845",
+        "selected": true
     },
     "numpy": {
         "url": "https://github.com/numpy/numpy.git",
@@ -20,6 +21,7 @@
         "name": "jinja",
         "url": "https://github.com/pallets/jinja.git",
         "commit_id": "15206881c006c79667fe5154fe80c01c65410679",
+        "selected": true,
         "src_path": "src/jinja2"
     },
     "fastapi":{
@@ -35,18 +37,21 @@
         "test_cmd": "-m \"not slow and not network and not db\"",
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": "python -m pip install -ve . --no-build-isolation",
+        "selected": true,
         "env_name": "pandas-dev"
     },
     "seaborn":{
         "url": "https://github.com/mwaskom/seaborn/",
         "commit_id": "d00a27df750130e28e4801caaedc782433863a37",
         "src_path": "seaborn",
+        "selected": true,
         "test_cmd": ""
     },
     "sphinx":{
         "url":"https://github.com/sphinx-doc/sphinx",
         "commit_id":"8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
         "src_path": "sphinx",
+        "selected": true,
         "conda_env_create": "conda create -n sphinx-dev -c conda-forge python==3.12 pytest pytest-cov defusedxml",
         "env_name": "sphinx-dev"
     },
@@ -67,7 +72,18 @@
         "url": "https://github.com/pallets/flask",
         "commit_id": "2c1b30d0503cfb064f1cb252e6614a06915a362a",
         "src_path": "src/flask",
+        "build_cmd": "pip install --editable .[async]",
         "conda_env_create": "conda create -n flask-dev -c conda-forge python==3.12 pytest pytest-cov ",
         "env_name": "flask-dev"
+    },
+    "matplotlib":{
+        "url": "https://github.com/matplotlib/matplotlib",
+        "commit_id": "1392cbe3c79cdb93f9282747841d648770f60249",
+        "src_path": "lib/matplotlib",
+        "conda_env_create": "conda env create --file environment.yml",
+        "build_cmd": [
+                        "python -m pip install --verbose --no-build-isolation --editable .[dev]"
+                    ],
+        "env_name": "mpl-dev"
     }
 }

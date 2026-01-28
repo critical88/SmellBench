@@ -132,7 +132,9 @@ def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False):
         if isinstance(cmds[0], str):
             cmds = [cmds]
     for cmd in cmds:
-        process = subprocess.run((prefix + cmd), text=True, capture_output=capture_output, cwd=cwd, env=envs)
+        final_cmd = prefix + cmd
+        final_cmd = [cmd for cmd in final_cmd if cmd]
+        process = subprocess.run(final_cmd, text=True, capture_output=capture_output, cwd=cwd, env=envs)
         if process.returncode != 0:
             return process
     return process
