@@ -17,6 +17,7 @@
         "commit_id": "83f8643ffb5b7f197457379148e2fa118ab0fcdc"
     },
     "jinja": {
+        "name": "jinja",
         "url": "https://github.com/pallets/jinja.git",
         "commit_id": "15206881c006c79667fe5154fe80c01c65410679",
         "src_path": "src/jinja2"
@@ -32,7 +33,9 @@
         "commit_id":"9c8bc3e55188c8aff37207a74f1dd144980b8874",
         "src_path":"pandas",
         "test_cmd": "-m \"not slow and not network and not db\"",
-        "build_cmd": "python -m pip install -ve . --no-build-isolation"
+        "conda_env_create": "conda env create --file environment.yml",
+        "build_cmd": "python -m pip install -ve . --no-build-isolation",
+        "env_name": "pandas-dev"
     },
     "seaborn":{
         "url": "https://github.com/mwaskom/seaborn/",
@@ -44,5 +47,12 @@
         "url":"https://github.com/sphinx-doc/sphinx",
         "commit_id":"8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
         "src_path": "sphinx"
+    },
+    "scikit-learn":{
+        "url": "https://github.com/scikit-learn/scikit-learn",
+        "commit_id": "d3898d9d57aeb1e960d266613a2e31b07bca39d7",
+        "src_path": "sklearn",
+        "install": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
+        "conda_env": "sklearn-dev"
     }
 }

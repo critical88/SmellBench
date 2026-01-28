@@ -4,17 +4,19 @@ import argparse
 import subprocess
 from pathlib import Path
 from typing import Dict
+from utils import list_conda_envs
 import json
 with open("repo_list.json") as f:
     repo_list = json.load(f)
 
 DEFAULT_PROJECT_DIR = Path("../project")
 
-
-def clone_repos(project_dir: Path) -> None:
+def clone_repos(project_name: str, project_dir: Path) -> None:
     project_dir.mkdir(parents=True, exist_ok=True)
-
+    env_dict = list_conda_envs()
     for name, item in repo_list.items():
+        if project_name is not None and name != project_name:
+            continue
         url = item['url']
         commit_id = item['commit_id']
         repo_path = project_dir / name
@@ -43,8 +45,14 @@ def main() -> None:
         default=DEFAULT_PROJECT_DIR,
         help="default is `project`, the path that git clone into",
     )
+
+    parser.add_argument(
+        "--project-name",
+        type=str,
+        default=None,
+    )
     args = parser.parse_args()
-    clone_repos(args.dest.expanduser().resolve())
+    clone_repos(args.project_name, args.dest.expanduser().resolve())
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from client import LLMFactory, LLMClient, AgentClient, Client, LLMResponse, AgentResponse
 from collections import defaultdict
 from testunits import replace_and_test_caller, run_project_tests, create_test_command
-from utils import strip_python_comments, disableGitTools
+from utils import strip_python_comments, disableGitTools,_run_git_command
 try:
     from unidiff import PatchSet
 except ImportError:
@@ -709,18 +709,7 @@ class RefactorEvaluator:
             break
         return caller_content
 
-    def _run_git_command(self, args: Sequence[str], check: bool = True) -> subprocess.CompletedProcess:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=self.project_repo,
-            text=True,
-            capture_output=True,
-        )
-        if check and result.returncode != 0:
-            raise RuntimeError(
-                f"Git command {' '.join(args)} failed with code {result.returncode}: {result.stderr.strip()}"
-            )
-        return result
+    
 
     def _module_relative_path(self, module_path: str) -> Path:
         cleaned = (module_path or "").strip(".")
@@ -747,7 +736,7 @@ class RefactorEvaluator:
         return written
 
     def _has_staged_changes(self) -> bool:
-        result = self._run_git_command(["diff", "--cached", "--quiet"], check=False)
+        result = _run_git_command(["diff", "--cached", "--quiet"], check=False, cwd=self.project_repo)
         if result.returncode in (0, 1):
             return result.returncode == 1
         raise RuntimeError(f"Unexpected git diff --cached return code {result.returncode}")
@@ -774,7 +763,7 @@ class RefactorEvaluator:
         tmp_file = cache_dir / f"tmp_{str(uuid.uuid4())}.diff"
         tmp_file.write_text(diff_text)
         try:
-            self._run_git_command(['apply', str(tmp_file.absolute())])
+            _run_git_command(['apply', str(tmp_file.absolute())], cwd=self.project_repo)
         except:
             self._log("read agent cache failed")
             return None, None
@@ -1247,12 +1236,12 @@ class RefactorEvaluator:
         prediction = None
         try:
             self._log("committing bad code")
-            self._run_git_command(["reset", "--hard", original_head])
+            _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
             written_files = self._write_ground_truth_files(case)
             if written_files:
-                self._run_git_command(["add", *written_files])
+                _run_git_command(["add", *written_files], cwd=self.project_repo)
                 if self._has_staged_changes():
-                    self._run_git_command(["commit", "-m", f"[baseline] {case_id}"])
+                    _run_git_command(["commit", "-m", f"[baseline] {case_id}"], cwd=self.project_repo)
             
             is_cached, cached_info = self._read_cache_code_agent(case_id, prompt_hash)
             if is_cached:
@@ -1277,8 +1266,8 @@ class RefactorEvaluator:
                 if not invoke_success:
                     return None, False
                 # self._restore_ground_truth_callees(removal_records)
-                diff_text = self._run_git_command(["diff"]).stdout
-                diff_output = self._run_git_command(["diff", "--name-only"]).stdout
+                diff_text = _run_git_command(["diff"], cwd=self.project_repo).stdout
+                diff_output = _run_git_command(["diff", "--name-only"], cwd=self.project_repo).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
                 self._cache_code_agent_diff(case_id, prompt_hash, response, diff_text, diff_files)
             self._log(str(self.unpack_response(response)))
@@ -1289,7 +1278,7 @@ class RefactorEvaluator:
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
-            self._run_git_command(["reset", "--hard", original_head])
+            _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
         return prediction, success
 
     def run(self) -> Dict[str, Any]:
@@ -1326,7 +1315,7 @@ class RefactorEvaluator:
         prompt = build_prompt(case, use_code_agent=self.use_code_agent, test_cmd=test_cmd, expected_callees=callees)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
         original_head = case['commit_hash']
-        self._run_git_command(["reset", "--hard", original_head])
+        _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
         if self.use_code_agent:
             prediction, success = self._run_code_agent_workflow(case_id, case, prompt, prompt_hash)
             if prediction is None:

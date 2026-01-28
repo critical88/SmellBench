@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set
 import subprocess
 from types import CodeType, FrameType
-from utils import pushd
+from utils import pushd, prepare_to_run, get_spec
 import shlex
 
 try:
@@ -1001,6 +1001,22 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 def main(args: Optional[Sequence[str]] = None) -> int:
     """Entry point: orchestrate coverage run, graph building, and reporting."""
     project_root =  args.project_root / args.project_name
+
+    spec = get_spec(args.project_name)
+    if not prepare_to_run(spec):
+        return False
+    
+    current_conda_env = os.environ.get("CONDA_DEFAULT_ENV")
+    target_conda_env = None
+    if "env_name" in spec:
+        target_conda_env = spec['env_name']
+    if target_conda_env is not None and current_conda_env != target_conda_env:
+        print(f"environment different, redirected to {target_conda_env}")
+        # subprocess.run(["pytest", "-q"])
+        # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
+        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", args.project_name], text=True)
+        return 
+    
     commit_id = args.commit_id
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
@@ -1041,21 +1057,20 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     with pushd(project_root):
         subprocess.run(['git', 'reset', '--hard', commit_id], cwd=".", check=True)
         subprocess.run(['git', 'clean', '-fd'], cwd=".", check=True)
-        build_cmd = shlex.split(args.build_cmd, posix=False)
-        subprocess.run(build_cmd, cwd=".", check=True)
         cov.start()
+        print(f"start pytesting")
         try:
             exit_code = pytest.main(pytest_args, plugins=[plugin])
         finally:
             cov.stop()
             cov.save()
-
+    print(f"pytest done")
     if exit_code != 0:
         message = f"pytest exited with status {exit_code}."
         # if not args.allow_failures:
         #     raise SystemExit(message)
         print(f"Warning: {message} Proceeding with partial data.", file=sys.stderr)
-
+    print(f"start data collecting")
     data = cov.get_data()
     graph = CoverageGraph(
         src_root,
@@ -1066,7 +1081,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
     )
     graph.merge(data)
     tree = graph.build_tree()
-
+    print(f"data collect done")
     print(
         f"Mapped {len(graph.function_to_tests)} methods across "
         f"{len(graph.test_to_functions)} tests."
@@ -1096,23 +1111,13 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
     return 0
 
-def read_repo(project_name:str=None):
-    with open("repo_list.json") as f:
-        repo_list = json.load(f)
-    if project_name:
-        if project_name not in repo_list:
-            raise ValueError("please fill the information in repo_list.json")
-        return {project_name: repo_list[project_name]}
-    return repo_list
 
 if __name__ == "__main__":  # pragma: no cover
     args = parse_args()
-    repo_list = read_repo(args.project_name)
-    for repo_name, repo_info  in repo_list.items():
-        args.project_name = repo_name
-        args.src_path = repo_info['src_path'] if 'src_path' in repo_info else f'src/{repo_name}'
-        args.commit_id = repo_info['commit_id'] if 'commit_id' in repo_info else 'HEAD'
-        args.pytest_args = repo_info['test_cmd'] if "test_cmd" in repo_info else ""
-        args.build_cmd = repo_info['build_cmd'] if "build_cmd" in repo_info else "pip install -e ."
-        main(args)
+    repo_spec = get_spec(args.project_name)
+    args.project_name = repo_spec['name']
+    args.src_path = repo_spec['src_path'] if 'src_path' in repo_spec else f'src/{repo_spec}'
+    args.commit_id = repo_spec['commit_id'] if 'commit_id' in repo_spec else 'HEAD'
+    args.pytest_args = repo_spec['test_cmd'] if "test_cmd" in repo_spec else ""
+    main(args)
     raise SystemExit()

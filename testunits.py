@@ -71,7 +71,6 @@ def run_project_tests(project_path, test_file_paths, envs={}, test_cmd=""):
                 
             return True, result.stdout
 
-
             # test_func = [] if len(test_file_paths) > 100 else test_file_paths
             # if ignore_test:
             #     test_func.extend([f'--ignore={p}' for p in ignore_test])
