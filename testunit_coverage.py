@@ -958,52 +958,19 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default= "../project",
         help="Path to the click project. Defaults to ../project relative to this file.",
     )
-    parser.add_argument(
-        "--pytest-arg",
-        action="append",
-        default=[],
-        dest="pytest_args",
-        help="Extra argument to forward to pytest. Specify multiple times as needed.",
-    )
-    parser.add_argument(
-        "--allow-failures",
-        action="store_true",
-        help="Continue building the graph even if pytest exits with a non-zero status.",
-    )
-    parser.add_argument(
-        "--method",
-        action="append",
-        help="Fully qualified method key (module:qualname) to list connected tests for.",
-    )
-    parser.add_argument(
-        "--method-contains",
-        action="append",
-        help="Substring to fuzzy-match against method keys when listing tests.",
-    )
-    parser.add_argument(
-        "--skip-tree",
-        action="store_true",
-        help="Skip printing the ASCII tree (useful when only querying methods).",
-    )
-    parser.add_argument(
-        "--commit-id",
-        type=str,
-        default="HEAD"
-        )
-    parser.add_argument(
-        "--direct-call-only",
-        action="store_true",
-        default=False,
-        help="Only map methods that are directly called from within each pytest test.",
-    )
     return parser.parse_args(argv)
 
 
-def main(args: Optional[Sequence[str]] = None) -> int:
+def generate_function_mapping(project_name:str, project_path="../project") -> int:
     """Entry point: orchestrate coverage run, graph building, and reporting."""
-    project_root =  args.project_root / args.project_name
 
-    spec = get_spec(args.project_name)
+    repo_spec = get_spec(project_name)
+    repo_name = repo_spec['name']
+    project_root =  Path(project_path) / project_name
+
+    src_path = repo_spec['src_path'] if 'src_path' in repo_spec else f'src/{repo_name}'
+
+    spec = get_spec(project_name)
 
     if not prepare_to_run(spec):
         return False
@@ -1016,16 +983,16 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         print(f"environment different, redirected to {target_conda_env}")
         # subprocess.run(["pytest", "-q"])
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
-        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", args.project_name], text=True)
+        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", project_name], text=True)
         return 
     
     
-    commit_id = args.commit_id
+    commit_id = repo_spec['commit_id']
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
-    src_root = (project_root / args.src_path).resolve()
+    src_root = (project_root / src_path).resolve()
     
-    output_dir = Path("output") / args.project_name
+    output_dir = Path("output") / project_name
     os.makedirs(output_dir, exist_ok=True)
     output_json = output_dir / "function_testunit_mapping.json"
 
@@ -1037,25 +1004,24 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         lookup,
         class_lookup,
         function_code_lookup,
-    ) = build_function_index(src_root, args.project_name)
+    ) = build_function_index(src_root, project_name)
     cov = coverage.Coverage(branch=True, source=[str(src_root)])
     cov.erase()
     direct_call_map: Optional[MutableMapping[str, Set[str]]] = None
-    if args.direct_call_only:
-        direct_call_map = defaultdict(set)
+    
     plugin = CoverageContextPlugin(
         cov,
         function_code_lookup,
         direct_call_map,
-        require_direct_calls=args.direct_call_only,
+        require_direct_calls=False,
     )
         
-    pytest_args = []
-    if args.pytest_args:
-        pytest_args.extend(shlex.split(args.pytest_args, posix=True))
+    test_cmd = []
+    if "test_cmd" in repo_spec:
+        test_cmd.extend(shlex.split(repo_spec['test_cmd'], posix=True))
     envs = {}
-    if args.src_path != args.project_name:
-        envs["PYTHONPATH"] = str(Path(args.src_path).parent)
+    if src_path != project_name:
+        envs["PYTHONPATH"] = str(Path(src_path).parent)
     exit_code = 0
     with pushd(project_root):
         subprocess.run(['git', 'reset', '--hard', commit_id], cwd=".", check=True)
@@ -1063,7 +1029,7 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         cov.start()
         print(f"start pytesting")
         try:
-            exit_code = pytest.main(pytest_args, plugins=[plugin])
+            exit_code = pytest.main(test_cmd, plugins=[plugin])
         finally:
             cov.stop()
             cov.save()
@@ -1090,11 +1056,11 @@ def main(args: Optional[Sequence[str]] = None) -> int:
         f"{len(graph.test_to_functions)} tests."
     )
     meta = {
-        "src_path": args.src_path,
-        "commit_id": args.commit_id,
-        "test_cmd": args.pytest_args,
+        "src_path": src_path,
+        "commit_id": repo_spec['commit_id'],
+        "test_cmd": repo_spec['test_cmd'] if "test_cmd" in repo_spec else "",
         "envs": envs,
-        "direct_call_only": args.direct_call_only,
+        "direct_call_only": False,
     }
 
     graph.export_json(output_json, meta)
@@ -1117,11 +1083,6 @@ def main(args: Optional[Sequence[str]] = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     args = parse_args()
-    repo_spec = get_spec(args.project_name)
-    repo_name = repo_spec['name']
-    args.project_name = repo_spec['name']
-    args.src_path = repo_spec['src_path'] if 'src_path' in repo_spec else f'src/{repo_name}'
-    args.commit_id = repo_spec['commit_id'] if 'commit_id' in repo_spec else 'HEAD'
-    args.pytest_args = repo_spec['test_cmd'] if "test_cmd" in repo_spec else ""
-    main(args)
+    
+    generate_function_mapping(args.project_name, args.project_root)
     raise SystemExit()

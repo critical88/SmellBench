@@ -10,6 +10,7 @@ from analyzer import MethodAnalyzer
 import json
 import argparse
 from testunits import process_refactoring
+from testunit_coverage import generate_function_mapping
 
 def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
     """
@@ -63,6 +64,10 @@ def main(args):
 
     print(f"Python version: {sys.version}")
     print(f"Current working directory: {os.getcwd()}")
+   
+
+    # print(f"Traversing All testunit")
+    # generate_function_mapping(project_name, project_path)
     print(f"\nAnalyzing codebase: {project_lib}")
     analyzer = MethodAnalyzer(project_name, project_path, long_method_depth=args.long_method_depth)
     

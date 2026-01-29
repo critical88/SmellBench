@@ -523,9 +523,11 @@ class MethodAnalyzer():
     def _read_meta_info(self, project_name):
         testunit_file = os.path.join("output", project_name, f"function_testunit_mapping.json")
         if not os.path.exists(testunit_file):
-            raise Exception("please first run `testunit_cover.py` to generate mapping file.")
+            raise Exception("please first run `testunit_coverage.py` to generate mapping file.")
         with open(testunit_file, 'r', encoding='utf-8') as f:
             meta_info = json.load(f)
+        if len(meta_info['functions']) == 0:
+            raise Exception("failed to generate mapping file, please check the log and fix the bug then rerun it")
         all_classes = set()
         all_class_parent = defaultdict(list)
         for _, _cls in meta_info['classes'].items():
