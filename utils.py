@@ -211,7 +211,12 @@ def download_repo(spec, project_path="../project"):
         return True
     url = spec['url']
     print(f"Cloning {repo_name} ...")
-    subprocess.run(["git", "clone", url, str(repo_path)], check=True, text=True, capture_output=True)
+    if "submodule" in spec:
+        subprocess.run(["git", "clone", "--recurse-submodules", url, str(repo_path)], check=True, text=True, capture_output=True)
+        print(f"Updating submodule in {repo_name}...")
+        subprocess.run(["git", "submodule", "update", "--init"], check=True, text=True, cwd=repo_path)
+    else:
+        subprocess.run(["git", "clone", url, str(repo_path)], check=True, text=True, capture_output=True)
     if os.path.exists(repo_path):
         print(f"Repo {repo_name} clone success")
         return True

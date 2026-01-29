@@ -7,7 +7,14 @@
     "numpy": {
         "url": "https://github.com/numpy/numpy.git",
         "commit_id": "c3d60fc8393f3ca3306b8ce8b6453d43737e3d90",
-        "src_path": "numpy"
+        "src_path": "numpy",
+        "submodule": true,
+        "conda_env_create": "conda env create -f environment.yml",
+        "build_cmd": [
+                        "python -m pip install -r requirements/test_requirements.txt",
+                        "pip install -e ."
+                    ],
+        "env_name": "numpy-dev"
     },
     "requests": {
         "url": "https://github.com/psf/requests.git",
@@ -45,7 +52,7 @@
         "commit_id": "d00a27df750130e28e4801caaedc782433863a37",
         "src_path": "seaborn",
         "selected": true,
-        "test_cmd": ""
+        "build_cmd": "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
     },
     "sphinx":{
         "url":"https://github.com/sphinx-doc/sphinx",
