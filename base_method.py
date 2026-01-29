@@ -934,7 +934,8 @@ Callee:
             is_staticmethod = True
         if 'classmethod' in decorators:
             is_classmethod = True
-        
+        if isinstance(callee_method_ast, ast.Pass):
+            return
         args_info = self.__get_args_from_ast(callee_method_ast)
         args_info['is_staticmethod'] = is_staticmethod
         args_info['is_classmethod'] = is_classmethod
