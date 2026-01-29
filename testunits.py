@@ -42,8 +42,8 @@ def create_test_command( test_file_paths=[], test_cmd="", envs=None):
     return cmd
 
 def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd=""):
-    """Run the project's test suite"""
     spec = get_spec(project_name)
+    """Run the project's test suite"""
     try:
         # First try to install the project
         # subprocess.run(['pip', 'install', '-e', '.'], cwd=project_path, check=True)
@@ -151,6 +151,10 @@ def process_refactoring(project_name):
     envs = settings.get("envs", {})
     # Process each refactoring
     successed_refactor_data = []
+    spec = get_spec(project_name)
+    if not prepare_to_run(spec):
+        print("failed to prepare repo env")
+        return False
     for refactor_item in tqdm(refactor_data, desc="testing cases..."):
         success = replace_and_test_caller(
             project_name=project_name, 

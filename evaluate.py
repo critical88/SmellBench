@@ -17,7 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from client import LLMFactory, LLMClient, AgentClient, Client, LLMResponse, AgentResponse
 from collections import defaultdict
 from testunits import replace_and_test_caller, run_project_tests, create_test_command
-from utils import strip_python_comments, disableGitTools,_run_git_command, prepare_env
+from utils import strip_python_comments, disableGitTools,_run_git_command, prepare_to_run, get_spec
 try:
     from unidiff import PatchSet
 except ImportError:
@@ -1312,6 +1312,9 @@ class RefactorEvaluator:
         # if case['meta']['depth'] == 1:
         #     return
         project_name = case['name']
+        spec = get_spec(project_name)
+        if not prepare_to_run(spec):
+            return
         ground_truth = parse_ground_truth(case, cascade=True)
         callees = [f"file_path={os.sep.join(c.meta['position']['module_path'].split('.'))}.py, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
         test_cmd = create_test_command(test_file_paths=case['testsuites'], test_cmd=self.test_cmd, envs=self.envs, use_envs=True) if self.args.use_test else DEFAULT_FORBID_TEST
