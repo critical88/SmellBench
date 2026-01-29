@@ -82,7 +82,7 @@
         "src_path": "lib/matplotlib",
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": [
-                        "python -m pip install --verbose --no-build-isolation --editable .[dev]"
+                        "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
                     ],
         "env_name": "mpl-dev"
     },
@@ -92,6 +92,7 @@
         "src_path": "xarray",
         "conda_env_create": "conda create -n xarray-dev python==3.10 h5py",
         "build_cmd": "pip install -e \".[dev]\"",
-        "env_name": "xarray-dev"
+        "env_name": "xarray-dev",
+        "test_cmd" : "--ignore=xarray/tests/test_distributed"
     }
 }

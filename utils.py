@@ -162,8 +162,13 @@ def install_repo(spec, project_path="../project"):
         return True
     cwd = os.path.join(project_path, repo_name)
     process = _run_git_command(["checkout", spec['commit_id']], cwd=cwd)
-    if process.stdout:
+    if process.returncode == 0:
         print(f"checkout {repo_name} success")
+    
+    process = _run_git_command(["clean", "-f", "-x"], cwd=cwd)
+    if process.returncode == 0:
+        print(f"clean {repo_name} success")
+
     build_cmd = ["pip install -e ."]
     if "build_cmd" in spec:
         build_cmd = spec['build_cmd']
