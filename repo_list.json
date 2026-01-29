@@ -2,7 +2,10 @@
     "click": {
         "url": "https://github.com/pallets/click.git",
         "commit_id": "1d038f270701498433cb432f54db89f95f07a845",
-        "selected": true
+        "selected": true,
+        "conda_env_create": "conda create -n click-dev python==3.10 pytest pytest-cov",
+        "build_cmd": "pip install -e \".[dev]\"",
+        "env_name": "click-dev"
     },
     "numpy": {
         "url": "https://github.com/numpy/numpy.git",
@@ -30,7 +33,10 @@
         "url": "https://github.com/pallets/jinja.git",
         "commit_id": "15206881c006c79667fe5154fe80c01c65410679",
         "selected": true,
-        "src_path": "src/jinja2"
+        "src_path": "src/jinja2",
+        "conda_env_create": "conda create -n jinja-dev python==3.10 pytest pytest-cov",
+        "build_cmd": "pip install -e .",
+        "env_name": "jinja-dev"
     },
     "fastapi":{
         "url": "https://github.com/fastapi/fastapi.git",
