@@ -90,7 +90,7 @@
         "url": "https://github.com/pydata/xarray",
         "commit_id": "da9ff0ab287ec7ad3ab3aed73860178bc5b6e761",
         "src_path": "xarray",
-        "conda_env_create": "conda create -n python==3.10 h5py",
+        "conda_env_create": "conda create -n xarray-dev python==3.10 h5py",
         "build_cmd": "pip install -e \".[dev]\"",
         "env_name": "xarray-dev"
     }
