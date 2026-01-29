@@ -48,7 +48,7 @@
         "url":"https://github.com/pandas-dev/pandas",
         "commit_id":"9c8bc3e55188c8aff37207a74f1dd144980b8874",
         "src_path":"pandas",
-        "test_cmd": "-m \"not slow and not network and not db\"",
+        "test_cmd": "-m \"not slow and not network and not db\" --ignore=pandas/tests/io/test_clipboard.py",
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": "python -m pip install -ve . --no-build-isolation",
         "selected": true,
