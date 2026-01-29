@@ -106,6 +106,6 @@
         "conda_env_create": "conda create -n xarray-dev python==3.10 h5py",
         "build_cmd": "pip install -e \".[dev]\"",
         "env_name": "xarray-dev",
-        "test_cmd" : "--ignore=xarray/tests/test_distributed"
+        "test_cmd" : "--ignore=xarray/tests/test_distributed.py"
     }
 }
