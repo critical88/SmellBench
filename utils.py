@@ -120,7 +120,7 @@ def get_repo_name(spec):
         repo_name = spec['src_path'].split("/")[-1]
     return repo_name
 
-def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False):
+def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False, use_shell=False):
     env_name = ""
     if "env_name" in spec:
         env_name = spec['env_name']
@@ -134,7 +134,9 @@ def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False):
     for cmd in cmds:
         final_cmd = prefix + cmd
         final_cmd = [cmd for cmd in final_cmd if cmd]
-        process = subprocess.run(final_cmd, text=True, capture_output=capture_output, cwd=cwd, env=envs)
+        if use_shell:
+            final_cmd = " ".join(final_cmd)
+        process = subprocess.run(final_cmd, text=True, capture_output=capture_output, cwd=cwd, env=envs, shell=use_shell)
         if process.returncode != 0:
             return process
     return process
@@ -169,9 +171,8 @@ def install_repo(spec, project_path="../project"):
         build_cmd = [build_cmd]
 
     build_cmd = [bc.split(" ") if isinstance(bc, str) else bc for bc in build_cmd]
-            
     print(f"installing {repo_name} ...")
-    process = conda_exec_cmd(build_cmd, spec, cwd=cwd)
+    process = conda_exec_cmd(build_cmd, spec, cwd=cwd, use_shell=True)
     
     if isinstalled(spec):
         print(f"install {repo_name} success")
@@ -197,13 +198,6 @@ def isinstalled(spec):
             return True
     return False
 
-def prepare_and_install(spec, project_path="../project"):
-    if not prepare_env(spec):
-        return False
-    
-    if not install_repo(spec, project_path=project_path):
-        return False
-    return True
 def download_repo(spec, project_path="../project"):
     repo_name = spec['name']
     repo_path = os.path.join(project_path, spec['name'])
