@@ -77,7 +77,9 @@
     "sympy":{
         "url": "https://github.com/sympy/sympy",
         "commit_id": "16fa855354eb7bcabd3fe10993841e03b1382692",
-        "src_path": "sympy"
+        "src_path": "sympy",
+        "conda_env_create": "conda create -n sympy-dev python==3.12 pytest pytest-cov hypothesis",
+        "env_name": "sympy-dev"
     },
     "scikit-learn":{
         "url": "https://github.com/scikit-learn/scikit-learn",

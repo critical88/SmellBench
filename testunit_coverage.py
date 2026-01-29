@@ -866,7 +866,11 @@ def build_function_index(
             print(f"Skipping {py_file}: {exc}", file=sys.stderr)
             continue
         metadata_collector = ModuleMetadataCollector(module)
-        metadata_collector.visit(tree)
+        try:
+            metadata_collector.visit(tree)
+        except Exception as exc:
+            print(f"Skipping {py_file}: {exc}", file=sys.stderr)
+            continue
         collector = FunctionCollector(
             module,
             py_file,
@@ -874,7 +878,11 @@ def build_function_index(
             metadata_collector.imports,
             metadata_collector.class_names,
         )
-        collector.visit(tree)
+        try:
+            collector.visit(tree)
+        except Exception as exc:
+            print(f"Skipping {py_file}: {exc}", file=sys.stderr)
+            continue
         if not collector.functions and not collector.class_infos:
             continue
         line_map: Dict[int, List[FunctionInfo]] = defaultdict(list)
