@@ -981,6 +981,8 @@ Callee:
         except Exception as e:
             _log(f"Error parsing call: {e}", level=DEBUG_LOG_LEVEL)
             return
+        if isinstance(caller_method_ast.body[0], ast.Pass):
+            return
         caller_args_info = self.__get_args_from_ast(caller_method_ast.body[0])
         caller_locals = set(caller_args_info['args'])
         # 找到调用者的方法
