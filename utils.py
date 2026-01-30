@@ -28,6 +28,8 @@ def pushd(path: Path):
 
 @contextlib.contextmanager
 def disableGitTools(project_path: Path):
+    if isinstance(project_path, str):
+        project_path = Path(project_path)
     git_dir = project_path / ".git"
     tmp_dir = project_path.parent / f"{project_path.name}_{str(uuid.uuid4())}"
     dest_dir = tmp_dir / ".git"

@@ -239,6 +239,7 @@ class QwenCodeClient(AgentClient):
         api_duration= 0 
         num_turns = 0
         if output_text:
+            response = output_text
             output_stream_text_list = output_text.split("\n")
             for o in output_stream_text_list:
                 if not o:
@@ -252,7 +253,6 @@ class QwenCodeClient(AgentClient):
                             tool_call_success += 1 
                 elif o['type'] == 'result':
                     content = o['result']
-                    response = o
                     prompt_tokens = o['usage']['input_tokens']
                     completion_tokens = o['usage']['output_tokens']
                     total_tokens = o['usage'].get('total_tokens', 0)

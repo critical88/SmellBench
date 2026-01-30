@@ -77,7 +77,7 @@ class PredictionArtifacts:
 
 @dataclasses.dataclass
 class CaseResult:
-    case_id: str
+    instance_id: str
     prompt_hash: str
     caller_accuracy: Optional[float]
     callee_precision: Optional[float]
@@ -189,7 +189,7 @@ def build_prompt(case: Dict[str, Any], test_cmd:str=None, use_code_agent=False, 
 
 
 def case_identifier(case: Dict[str, Any], fallback_index: int) -> str:
-    for key in ("case_id", "id", "uuid", "name", "method_name", "module_path"):
+    for key in ("instance_id", "id", "uuid", "name", "method_name", "module_path"):
         value = case.get(key)
         if isinstance(value, str) and value.strip():
             return value
@@ -631,20 +631,30 @@ def mean_or_none(values: Iterable[Optional[float]]) -> Optional[float]:
 class RefactorEvaluator:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        _input = os.path.join("output", args.project_name, "successful_refactor_codes.json")
+        _input = os.path.join(args.benchmark_file)
         self.data_path = _input
-        with open(self.data_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        if _input.endswith(".jsonl"):
+            data = []
+            with open(self.data_path, "r", encoding="utf-8") as f:
+                for d in f.readlines():
+                    d = json.loads(d)
+                    data.append(d)
+        elif _input.endswith(".json"):
+            with open(self.data_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        else:
+            raise ValueError(f"unknown extension of the benchmark file {_input}")
         self.project_path = os.path.join(args.project_dir)
         self.project_root = Path(args.project_dir)
-        self.project_name = args.project_name
-        self.project_repo = self.project_root / self.project_name
-        self.cases = data['refactor_codes']
-        self.settings = data['settings']
-        self.src_path = self.settings['src_path']
-        self.test_cmd = self.settings.get('test_cmd', "")
-        self.envs = self.settings.get("envs", {})
-        self.output_dir = Path(args.output_dir) / self.project_name
+        self.cases = data
+        # self.project_name = args.project_name
+        # self.project_repo = self.project_root / self.project_name
+        # self.cases = data['refactor_codes']
+        # self.settings = data['settings']
+        # self.src_path = self.settings['src_path']
+        # self.test_cmd = self.settings.get('test_cmd', "")
+        # self.envs = self.settings.get("envs", {})
+        self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         self.limit = args.limit
@@ -711,42 +721,49 @@ class RefactorEvaluator:
 
     
 
-    def _module_relative_path(self, module_path: str) -> Path:
+    def _module_relative_path(self, module_path: str, src_path:str) -> Path:
         cleaned = (module_path or "").strip(".")
-        src_tail = Path(self.src_path).parts[-1] if Path(self.src_path).parts else self.src_path
+        src_tail = Path(src_path).parts[-1] if Path(src_path).parts else src_path
         if cleaned.startswith(f"{src_tail}."):
             cleaned = cleaned[len(src_tail) + 1 :]
         if not cleaned:
             rel = Path("__init__.py")
         else:
             rel = Path(cleaned.replace(".", os.sep) + ".py")
-        return Path(self.src_path) / rel
+        return Path(src_path) / rel
 
     def _write_ground_truth_files(self, case: Dict[str, Any]) -> List[str]:
         written: List[str] = []
+        project_repo = self.get_project_path(case)
         for file_entry in case.get("caller_file_content", []):
             module_path = file_entry.get("module_path")
             if not module_path:
                 continue
-            rel_path = self._module_relative_path(module_path)
-            abs_path = self.project_repo / rel_path
+            rel_path = self._module_relative_path(module_path, case['settings']['src_path'])
+            abs_path = project_repo / rel_path
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(file_entry.get("code", ""), encoding="utf-8")
             written.append(str(rel_path).replace("\\", "/"))
         return written
 
-    def _has_staged_changes(self) -> bool:
-        result = _run_git_command(["diff", "--cached", "--quiet"], check=False, cwd=self.project_repo)
+    def _has_staged_changes(self, case) -> bool:
+        project_repo = self.get_project_path(case)
+        result = _run_git_command(["diff", "--cached", "--quiet"], check=False, cwd=project_repo)
         if result.returncode in (0, 1):
             return result.returncode == 1
         raise RuntimeError(f"Unexpected git diff --cached return code {result.returncode}")
 
-    def _read_cache_code_agent(self, case_id:str,
+    def get_project_path(self, case):
+        return os.path.join(self.project_path, case['name'])
+
+    def _read_cache_code_agent(self, case,
                                prompt_hash:str):
         cache_dir = Path("cache")
-        cache_dir = cache_dir / self.project_name
+        project_name = case['name']
+        cache_dir = cache_dir / project_name
+
         cache_dir.mkdir(exist_ok=True)
-        cache_path = cache_dir / f"code_agent_{self.model}_{self.llm_client.model}_{self.project_name}.json"
+        cache_path = cache_dir / f"code_agent_{self.model}_{self.llm_client.model}_{project_name}.json"
 
         if not cache_path.exists():
             return None, None
@@ -760,10 +777,11 @@ class RefactorEvaluator:
         stat = payload.get("stat", None)
         if stat:
             response:AgentResponse= AgentResponse(content=output_text, model=self.llm_client.model, **stat)
+            response.raw_response = payload.get("raw_response", None)
         tmp_file = cache_dir / f"tmp_{str(uuid.uuid4())}.diff"
         tmp_file.write_text(diff_text)
         try:
-            _run_git_command(['apply', str(tmp_file.absolute())], cwd=self.project_repo)
+            _run_git_command(['apply', str(tmp_file.absolute())], cwd=self.get_project_path(case))
         except:
             self._log("read agent cache failed")
             return None, None
@@ -776,7 +794,7 @@ class RefactorEvaluator:
 
     def _cache_code_agent_diff(
         self,
-        case_id: str,
+        case,
         prompt_hash: str,
         response: LLMResponse,
         diff_text: str,
@@ -784,13 +802,15 @@ class RefactorEvaluator:
     ) -> None:
         if len(diff_files) == 0:
             return
+        instance_id = case['instance_id']
+        project_name = case['name']
         cache_dir = Path("cache")
-        cache_dir = cache_dir / self.project_name
+        cache_dir = cache_dir / project_name
         cache_dir.mkdir(exist_ok=True)
         agent_model = self.llm_client.model
         stat = self.unpack_response(response)
-        payload = {"case_id": case_id,"prompt_hash": prompt_hash,"model": agent_model,"agent": self.model,"project_name": self.project_name,"output_text": response.content,"stat": stat,"diff_files": diff_files,"diff": diff_text}
-        cache_path = cache_dir / f"code_agent_{self.model}_{agent_model}_{self.project_name}.json"
+        payload = {"instance_id": instance_id, "raw_response": response.raw_response, "prompt_hash": prompt_hash,"model": agent_model,"agent": self.model,"project_name": project_name,"output_text": response.content,"stat": stat,"diff_files": diff_files,"diff": diff_text}
+        cache_path = cache_dir / f"code_agent_{self.model}_{agent_model}_{project_name}.json"
         if cache_path.exists():
             cache_json = json.loads(cache_path.read_text(encoding="utf-8"))
         else:
@@ -798,23 +818,25 @@ class RefactorEvaluator:
         cache_json[prompt_hash] = payload
         cache_path.write_text(json.dumps(cache_json, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def _modules_from_paths(self, diff_files: List[str]) -> Set[str]:
+    def _modules_from_paths(self, case, diff_files: List[str]) -> Set[str]:
         modules: Set[str] = set()
         for diff_file in diff_files:
-            module_name = self._module_from_diff_path(diff_file)
+            module_name = self._module_from_diff_path(case, diff_file)
             if module_name:
                 modules.add(module_name)
         return modules
 
-    def _module_from_diff_path(self, diff_file: str) -> Optional[str]:
-        src_root = Path(self.src_path)
+    def _module_from_diff_path(self, case, diff_file: str) -> Optional[str]:
+        src_path = case['settings']['src_path']
+        project_repo = self.get_project_path(case)
+        src_root = Path(src_path)
         if not src_root.is_absolute():
-            src_root = (self.project_repo / src_root).resolve()
+            src_root = (project_repo / src_root).resolve()
         else:
             src_root = src_root.resolve()
         rel_path = Path(diff_file.strip())
         if not rel_path.is_absolute():
-            rel_path = (self.project_repo / rel_path).resolve()
+            rel_path = (project_repo / rel_path).resolve()
         else:
             rel_path = rel_path.resolve()
         try:
@@ -824,7 +846,7 @@ class RefactorEvaluator:
         base_module = src_root.parts[-1] if src_root.parts else src_root.name
         return ".".join([base_module] + list(relative.with_suffix("").parts))
 
-    def _parse_diff_changed_lines_manual(self, diff_text: str) -> Dict[str, Set[int]]:
+    def _parse_diff_changed_lines_manual(self, case, diff_text: str) -> Dict[str, Set[int]]:
         changed_lines: Dict[str, Set[int]] = defaultdict(set)
         current_module: Optional[str] = None
         new_line: Optional[int] = None
@@ -841,7 +863,7 @@ class RefactorEvaluator:
                     continue
                 if path.startswith("b/"):
                     path = path[2:]
-                module_path = self._module_from_diff_path(path)
+                module_path = self._module_from_diff_path(case, path)
                 current_module = module_path
                 new_line = None
                 continue
@@ -870,23 +892,23 @@ class RefactorEvaluator:
                 new_line += 1
         return changed_lines
 
-    def _parse_diff_changed_lines(self, diff_text: str) -> Dict[str, Set[int]]:
+    def _parse_diff_changed_lines(self, case, diff_text: str) -> Dict[str, Set[int]]:
         if not diff_text or not diff_text.strip():
             return {}
         if PatchSet is None:
-            return self._parse_diff_changed_lines_manual(diff_text)
+            return self._parse_diff_changed_lines_manual(case, diff_text)
         changed_lines: Dict[str, Set[int]] = defaultdict(set)
         try:
             patch = PatchSet(diff_text, encoding="utf-8")
         except Exception:
-            return self._parse_diff_changed_lines_manual(diff_text)
+            return self._parse_diff_changed_lines_manual(case, diff_text)
         for patched_file in patch:
             target_path = getattr(patched_file, "path", None) or patched_file.target_file
             if not target_path or target_path == "/dev/null":
                 continue
             if target_path.startswith("b/"):
                 target_path = target_path[2:]
-            module_path = self._module_from_diff_path(target_path)
+            module_path = self._module_from_diff_path(case, target_path)
             if not module_path:
                 continue
             module_lines = changed_lines[module_path]
@@ -1023,10 +1045,12 @@ class RefactorEvaluator:
 
     def _remove_ground_truth_callees(self, case: Dict[str, Any]) -> List[Dict[str, Any]]:
         callee_map = self._collect_label_callees(case)
+        project_repo = self.get_project_path(case)
         removal_records: List[Dict[str, Any]] = []
+        src_path = case['settings']['src_path']
         for module_path, entries in callee_map.items():
-            rel_path = self._module_relative_path(module_path)
-            abs_path = self.project_repo / rel_path
+            rel_path = self._module_relative_path(module_path, src_path)
+            abs_path = project_repo / rel_path
             if not abs_path.exists():
                 continue
             try:
@@ -1065,10 +1089,12 @@ class RefactorEvaluator:
                 removal_records.extend(file_records)
         return removal_records
 
-    def _restore_ground_truth_callees(self, removals: List[Dict[str, Any]]) -> None:
+    def _restore_ground_truth_callees(self, case, removals: List[Dict[str, Any]]) -> None:
         if not removals:
             return
+        project_repo = self.get_project_path(case)
         grouped: Dict[Path, List[Dict[str, Any]]] = defaultdict(list)
+        src_path = case['settings']['src_path']
         for entry in removals:
             grouped[entry["file_path"]].append(entry)
         for path, entries in grouped.items():
@@ -1088,8 +1114,8 @@ class RefactorEvaluator:
                 if placeholder not in source:
                     continue
                 if module_path:
-                    rel_path = self._module_relative_path(module_path)
-                    expected_path = self.project_repo / rel_path
+                    rel_path = self._module_relative_path(module_path, src_path)
+                    expected_path = project_repo / rel_path
                     if expected_path.resolve() != path.resolve():
                         continue
                 new_functions = _find_functions_from_block(source,class_name=class_name, method_name=method_name)
@@ -1134,9 +1160,11 @@ class RefactorEvaluator:
         diff_files: List[str],
         diff_text: str,
     ) -> PredictionArtifacts:
-        changed_modules = self._modules_from_paths(diff_files)
-        changed_line_map = self._parse_diff_changed_lines(diff_text) if diff_text else {}
+        project_repo = self.get_project_path(case)
+        changed_modules = self._modules_from_paths(case, diff_files)
+        changed_line_map = self._parse_diff_changed_lines(case, diff_text) if diff_text else {}
         target_lookup: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+        src_path = case['settings']['src_path']
         for entry in case.get("before_refactor_code", []):
             module_path = entry.get("module_path")
             if module_path:
@@ -1157,13 +1185,13 @@ class RefactorEvaluator:
             candidate_modules.update(caller_modules)
             candidate_modules.update(changed_modules)
             for diff_file in diff_files:
-                module_path = self._module_from_diff_path(diff_file)
+                module_path = self._module_from_diff_path(case, diff_file)
                 if module_path:
                     candidate_modules.add(module_path)
         module_file_map: Dict[str, Path] = {}
         for module_path in candidate_modules:
-            rel_path = self._module_relative_path(module_path)
-            abs_path = self.project_repo / rel_path
+            rel_path = self._module_relative_path(module_path, src_path)
+            abs_path = project_repo / rel_path
             if not abs_path.exists() or abs_path.suffix.lower() != ".py":
                 continue
             module_file_map[module_path] = abs_path
@@ -1224,7 +1252,7 @@ class RefactorEvaluator:
         return {k: v for k, v in vars(response).items() if isinstance(v, int) or isinstance(v, float)}
     def _run_code_agent_workflow(
         self,
-        case_id: str,
+        instance_id: str,
         case: Dict[str, Any],
         prompt: str,
         prompt_hash: str,
@@ -1234,16 +1262,18 @@ class RefactorEvaluator:
         diff_files: List[str] = []
         success = False
         prediction = None
+        project_name = case['name']
+        project_repo = self.get_project_path(case)
         try:
             self._log("committing bad code")
-            _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
+            _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
             written_files = self._write_ground_truth_files(case)
             if written_files:
-                _run_git_command(["add", *written_files], cwd=self.project_repo)
-                if self._has_staged_changes():
-                    _run_git_command(["commit", "-m", f"[baseline] {case_id}"], cwd=self.project_repo)
+                _run_git_command(["add", *written_files], cwd=project_repo)
+                if self._has_staged_changes(case):
+                    _run_git_command(["commit", "-m", f"[baseline] {instance_id}"], cwd=project_repo)
             
-            is_cached, cached_info = self._read_cache_code_agent(case_id, prompt_hash)
+            is_cached, cached_info = self._read_cache_code_agent(case, prompt_hash)
             if is_cached:
                 self._log("reading cache")
                 output_text, response, diff_files, diff_text = cached_info
@@ -1255,9 +1285,9 @@ class RefactorEvaluator:
                 # Hide reference callees before invoking the agent to avoid data leakage.
                 removal_records = self._remove_ground_truth_callees(case)
                 
-                with disableGitTools(self.project_repo):
+                with disableGitTools(project_repo):
                     try:
-                        response = self.llm_client.chat(prompt, project_repo=self.project_repo)
+                        response = self.llm_client.chat(prompt, project_repo=project_repo)
                         invoke_success = response is not None
                         self._log(response.content)
                     except Exception as e:
@@ -1265,20 +1295,20 @@ class RefactorEvaluator:
                         invoke_success = False
                 if not invoke_success:
                     return None, False
-                # self._restore_ground_truth_callees(removal_records)
-                diff_text = _run_git_command(["diff"], cwd=self.project_repo).stdout
-                diff_output = _run_git_command(["diff", "--name-only"], cwd=self.project_repo).stdout
+                # self._restore_ground_truth_callees(case, removal_records)
+                diff_text = _run_git_command(["diff"], cwd=project_repo).stdout
+                diff_output = _run_git_command(["diff", "--name-only"], cwd=project_repo).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
-                self._cache_code_agent_diff(case_id, prompt_hash, response, diff_text, diff_files)
+                self._cache_code_agent_diff(case, prompt_hash, response, diff_text, diff_files)
             self._log(str(self.unpack_response(response)))
             self._log("parsing predictions")
             prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
             self._log("running testunit")
-            success, output = run_project_tests(self.project_name, os.path.join(self.project_path, self.project_name), case["testsuites"], envs=self.envs, test_cmd=self.test_cmd)
+            success, output = run_project_tests(project_name, project_repo, case["testsuites"], envs=case['settings']['envs'], test_cmd=case['settings']['test_cmd'])
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
-            _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
+            _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
         return prediction, success
 
     def run(self) -> Dict[str, Any]:
@@ -1291,9 +1321,9 @@ class RefactorEvaluator:
             if self.limit is not None and index >= self.limit:
                 break
             project_name = case['name']
-            case_id = case_identifier(case, index)
-            self._log(f"Processing {case_id}")
-            result = self._process_case(case_id, case)
+            instance_id = case['instance_id']
+            self._log(f"Processing {instance_id}")
+            result = self._process_case(instance_id, case)
             if result is None:
                 continue
             cases.append(case)
@@ -1306,39 +1336,41 @@ class RefactorEvaluator:
         summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         return summary
 
-    def _process_case(self, case_id: str, case: Dict[str, Any]) -> CaseResult:
+    def _process_case(self, instance_id: str, case: Dict[str, Any]) -> CaseResult:
         # if case['type'] == 'LongMethod':
         #     return
         # if case['meta']['depth'] == 1:
         #     return
         project_name = case['name']
         spec = get_spec(project_name)
+        project_repo = self.get_project_path(case)
+        src_path = case['settings']['src_path']
         if not prepare_to_run(spec):
             return
         ground_truth = parse_ground_truth(case, cascade=True)
         callees = [f"file_path={os.sep.join(c.meta['position']['module_path'].split('.'))}.py, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
-        test_cmd = create_test_command(test_file_paths=case['testsuites'], test_cmd=self.test_cmd, envs=self.envs, use_envs=True) if self.args.use_test else DEFAULT_FORBID_TEST
+        test_cmd = create_test_command(test_file_paths=case['testsuites'], test_cmd=case['settings']['test_cmd'], envs=case['settings']['envs'], use_envs=True) if self.args.use_test else DEFAULT_FORBID_TEST
         prompt = build_prompt(case, use_code_agent=self.use_code_agent, test_cmd=test_cmd, expected_callees=callees)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
         original_head = case['commit_hash']
-        _run_git_command(["reset", "--hard", original_head], cwd=self.project_repo)
+        _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
         if self.use_code_agent:
-            prediction, success = self._run_code_agent_workflow(case_id, case, prompt, prompt_hash)
+            prediction, success = self._run_code_agent_workflow(instance_id, case, prompt, prompt_hash)
             if prediction is None:
                 return None
         else:
-            payload = self._predict(prompt, prompt_hash, case_id, case)
+            payload = self._predict(prompt, prompt_hash, instance_id, case)
             prediction = parse_model_prediction(payload["response_text"], case)
             caller_content = self._extract_content(prediction.caller_segments, case)
             success = replace_and_test_caller(
                 project_name=project_name,
-                src_path=self.src_path,
+                src_path=src_path,
                 testsuites=case['testsuites'],
                 caller_file_content=caller_content,
                 project_dir=self.project_path,
                 commit_hash=case['commit_hash'],
-                envs=self.envs,
-                test_cmd=self.test_cmd
+                envs=case['settings']['envs'],
+                test_cmd=case['settings']['test_cmd']
             )
         filtered_prediction_callees = filter_prediction_callees(prediction.callee_segments, ground_truth['local_callees'])
         callee_matches = match_segments(
@@ -1356,9 +1388,9 @@ class RefactorEvaluator:
 
         if len(prediction.caller_segments) == 0:
             
-            self._log(f"No caller predictions found for case {case_id}.")
+            self._log(f"No caller predictions found for case {instance_id}.")
             return CaseResult(
-                case_id=case_id,
+                instance_id=instance_id,
                 prompt_hash=prompt_hash,
                 caller_accuracy=0,
                 callee_precision=callee_precision,
@@ -1379,9 +1411,9 @@ class RefactorEvaluator:
             "callee_match_scores": match_scores,
             "prediction_backend": "code_agent" if self.use_code_agent else "llm",
         }
-        self._log(f"case {case_id} result: callee_f1:{callee_f1}, callee_match: {callee_matches}, testunit pass:{success} ")
+        self._log(f"case {instance_id} result: callee_f1:{callee_f1}, callee_match: {callee_matches}, testunit pass:{success} ")
         return CaseResult(
-            case_id=case_id,
+            instance_id=instance_id,
             prompt_hash=prompt_hash,
             caller_accuracy= len(prediction.caller_segments) / len(ground_truth['callers']),
             callee_precision=callee_precision,
@@ -1396,11 +1428,11 @@ class RefactorEvaluator:
         self,
         prompt: str,
         prompt_hash: str,
-        case_id: str,
+        instance_id: str,
         case: Dict[str, Any],
     ) -> Dict[str, Any]:
         if self.llm_client is None:
-            raise RuntimeError(f"Cache miss for {case_id} and no LLM client available.")
+            raise RuntimeError(f"Cache miss for {instance_id} and no LLM client available.")
         response_text = self.llm_client.chat(
             prompt=prompt,
             temperature=self.args.temperature,
@@ -1408,7 +1440,7 @@ class RefactorEvaluator:
         payload = {
             "prompt_hash": prompt_hash,
             "model": self.args.model,
-            "case_id": case_id,
+            "instance_id": instance_id,
             "prompt": prompt,
             "response_text": response_text,
             "metadata": {
@@ -1459,7 +1491,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="run/refactor_eval", help="Directory for cached outputs and reports.")
     parser.add_argument("--model", default="claude_code", help="Model name used for generation.")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
-    parser.add_argument("--project-name", default="click", help="Project name")
+    # parser.add_argument("--project-name", default="click", help="Project name")
+    parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)
     parser.add_argument("--use-test", default=False, type=bool, help="instruct model whether to use unittest to fix errors")
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--limit", type=int, help="Process at most this many cases.")

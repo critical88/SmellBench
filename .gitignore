@@ -8,3 +8,4 @@ run/refactor_eval
 .env
 *.diff
 *.xml
+*.jsonl
