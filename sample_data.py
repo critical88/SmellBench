@@ -110,6 +110,8 @@ for repo_name, rules in sample_rules.items():
     benchmark.extend(hard_data)
     benchmark.extend(duplicated_data)
 
+    print(f"{repo_name} has {len(simple_data) + len(medium_data) + len(hard_data) + len(duplicated_data)} data")
+
 with open(benchmark_file, "w") as f:
     for b in benchmark:
         f.write(json.dumps(b) + "\n")
