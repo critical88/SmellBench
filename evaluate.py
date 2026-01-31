@@ -661,9 +661,10 @@ class RefactorEvaluator:
         self.verbose = args.verbose
         
         self.model = args.model
+        self.llm_model = args.llm_model
         self.llm_client: Optional[Client] = None
 
-        self.llm_client = LLMFactory.create_client(self.model)
+        self.llm_client = LLMFactory.create_client(client_type=self.model, model=self.llm_model)
         self.use_code_agent = isinstance(self.llm_client, AgentClient)
         self.results: List[CaseResult] = []
 
@@ -1490,6 +1491,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="run/refactor_eval", help="Directory for cached outputs and reports.")
     parser.add_argument("--model", default="claude_code", help="Model name used for generation.")
+    parser.add_argument("--llm_model", default=None, help="the LLM model")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     # parser.add_argument("--project-name", default="click", help="Project name")
     parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)

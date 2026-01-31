@@ -398,19 +398,23 @@ class LLMFactory:
         if client_type.lower() == 'gpt':
             api_key = api_key or os.getenv('OPENAI_API_KEY')
             base_url = base_url or os.getenv('OPENAI_BASE_URL')
-            model = os.getenv('OPENAI_MODEL')
+            if not model:
+                model = os.getenv('OPENAI_MODEL')
             return GPTClient(api_key=api_key, base_url=base_url, model=model)
         elif client_type.lower() == 'qwen':
-            api_key = api_key or os.getenv('QWEN_API_KEY')  
-            model = os.getenv('QWEN_MODEL')
+            api_key = api_key or os.getenv('QWEN_API_KEY') 
+            if not model: 
+                model = os.getenv('QWEN_MODEL')
             return QwenClient(api_key=api_key, base_url=base_url, model=model)
         elif client_type.lower() == "ant":
             api_key = api_key or os.getenv('ANT_API_KEY')
             base_url = base_url or os.getenv('ANT_BASE_URL')
-            model = os.getenv('ANT_MODEL')
+            if not model:
+                model = os.getenv('ANT_MODEL')
             return AntClient(api_key=api_key, base_url=base_url, model=model)
         elif client_type.lower() == 'qwen_code':
-            model = os.getenv("QWEN_CODE_MODEL")
+            if not model:
+                model = os.getenv("QWEN_CODE_MODEL")
             return QwenCodeClient(model)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
