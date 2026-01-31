@@ -1269,10 +1269,13 @@ class RefactorEvaluator:
             self._log("committing bad code")
             _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
             written_files = self._write_ground_truth_files(case)
+            intermit_commit_id = None
             if written_files:
                 _run_git_command(["add", *written_files], cwd=project_repo)
                 if self._has_staged_changes(case):
                     _run_git_command(["commit", "-m", f"[baseline] {instance_id}"], cwd=project_repo)
+                    intermit_commit_id = _run_git_command(["rev-parse", "HEAD"], cwd=project_repo).stdout
+                    intermit_commit_id = intermit_commit_id.strip()
             
             is_cached, cached_info = self._read_cache_code_agent(case, prompt_hash)
             if is_cached:
@@ -1285,20 +1288,29 @@ class RefactorEvaluator:
                 self._log("use code agent")
                 # Hide reference callees before invoking the agent to avoid data leakage.
                 removal_records = self._remove_ground_truth_callees(case)
+                edit_files = [os.path.relpath(r['file_path'], project_repo) for r in removal_records]
+                _run_git_command(["add", *edit_files], cwd=project_repo)
                 
-                with disableGitTools(project_repo):
-                    try:
-                        response = self.llm_client.chat(prompt, project_repo=project_repo)
-                        invoke_success = response is not None
-                        self._log(response.content)
-                    except Exception as e:
-                        print(e)
-                        invoke_success = False
+                if self._has_staged_changes(case):
+                    _run_git_command(["commit", "-m", f"[remove] {instance_id}"], cwd=project_repo)
+                    
+                # with disableGitTools(project_repo):
+                try:
+                    response = self.llm_client.chat(prompt, project_repo=project_repo)
+                    invoke_success = response is not None
+                    self._log(response.content)
+                except Exception as e:
+                    print(e)
+                    invoke_success = False
                 if not invoke_success:
                     return None, False
                 # self._restore_ground_truth_callees(case, removal_records)
-                diff_text = _run_git_command(["diff"], cwd=project_repo).stdout
-                diff_output = _run_git_command(["diff", "--name-only"], cwd=project_repo).stdout
+                if intermit_commit_id:
+                    diff_text = _run_git_command(["diff", intermit_commit_id], cwd=project_repo).stdout
+                    diff_output = _run_git_command(["diff", "--name-only", intermit_commit_id], cwd=project_repo).stdout
+                else:
+                    diff_text = _run_git_command(["diff"], cwd=project_repo).stdout
+                    diff_output = _run_git_command(["diff", "--name-only"], cwd=project_repo).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
                 self._cache_code_agent_diff(case, prompt_hash, response, diff_text, diff_files)
             self._log(str(self.unpack_response(response)))
