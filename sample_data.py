@@ -23,13 +23,13 @@ sample_rules = {
     "seaborn":{
         "simple": 8,
         "medium": 10,
-        "hard":10,
+        "hard":8,
         "duplicated":2
     },
     "pandas":{
         "simple": 8,
         "medium": 12,
-        "hard":15,
+        "hard":16,
         "duplicated":2
     },
     "matplotlib":{
@@ -47,7 +47,7 @@ sample_rules = {
     "scikit-learn":{
         "simple": 8,
         "medium": 12,
-        "hard":15,
+        "hard":16,
         "duplicated":3
     },
     "numpy":{
@@ -65,7 +65,7 @@ sample_rules = {
     # "sympy":{
     #     "simple": 8,
     #     "medium": 12,
-    #     "hard":15,
+    #     "hard":16,
     #     "duplicated":2
     # },
 }
