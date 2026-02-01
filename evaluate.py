@@ -1334,6 +1334,9 @@ class RefactorEvaluator:
             if self.limit is not None and index >= self.limit:
                 break
             project_name = case['name']
+            if self.args and self.args.project_name is not None:
+                if self.args.project_name != project_name:
+                    continue
             instance_id = case['instance_id']
             self._log(f"Processing {instance_id}")
             result = self._process_case(instance_id, case)
@@ -1505,7 +1508,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default="claude_code", help="Model name used for generation.")
     parser.add_argument("--llm_model", default=None, nargs="+", help="the LLM model")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
-    # parser.add_argument("--project-name", default="click", help="Project name")
+    parser.add_argument("--project-name", default=None, help="Project name")
     parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)
     parser.add_argument("--use-test", default=False, type=bool, help="instruct model whether to use unittest to fix errors")
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
