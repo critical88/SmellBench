@@ -1324,6 +1324,31 @@ class RefactorEvaluator:
             _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
         return prediction, success
 
+    def cache_result(self, case, caseResult:CaseResult):
+        if caseResult is None:
+            return
+        file = Path("cache") / f"{self.model}_{self.llm_model}_result.json"
+        ret = {}
+        if file.exists():
+            with open(file) as f:
+                ret = json.load(f)
+        
+        ret[case['instance_id']] = {k: v for k, v in vars(caseResult).items()}
+
+        with open(file, "w") as f:
+            f.write(json.dumps(ret))
+    def read_cache_result(self, case):
+        if not os.path.exists("cache"):
+            os.makedirs("cache")
+        file = Path("cache") / f"{self.model}_{self.llm_model}_result.json"
+        instance_id = case['instance_id']
+        if file.exists():
+            with open(file) as f:
+                ret = json.load(f)
+                if instance_id in ret:
+                    caseResult = CaseResult(**ret[instance_id])
+                    return caseResult
+
     def run(self) -> Dict[str, Any]:
         total_cases = len(self.cases)
         self._log(f"Loaded {total_cases} cases from {self.data_path}")
@@ -1338,8 +1363,14 @@ class RefactorEvaluator:
                 if self.args.project_name != project_name:
                     continue
             instance_id = case['instance_id']
-            self._log(f"Processing {instance_id}")
-            result = self._process_case(instance_id, case)
+            result = self.read_cache_result(case)
+            if result is None:
+                self._log(f"Processing {instance_id}")
+                try:
+                    result = self._process_case(instance_id, case)
+                    self.cache_result(case, result)
+                except Exception:
+                    result = None
             if result is None:
                 continue
             cases.append(case)
