@@ -1503,7 +1503,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
     parser.add_argument("--output-dir", default="run/refactor_eval", help="Directory for cached outputs and reports.")
     parser.add_argument("--model", default="claude_code", help="Model name used for generation.")
-    parser.add_argument("--llm_model", default=None, help="the LLM model")
+    parser.add_argument("--llm_model", default=None, nargs="+", help="the LLM model")
     parser.add_argument("--project-dir", default="../project", help="Project directory for resolving relative paths in test commands.")
     # parser.add_argument("--project-name", default="click", help="Project name")
     parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)
@@ -1518,9 +1518,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     # args.use_code_agent = True
-    evaluator = RefactorEvaluator(args)
-    summary = evaluator.run()
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    llm_models = args.llm_model
+    for llm_model in llm_models:
+        args.llm_model = llm_model
+        evaluator = RefactorEvaluator(args)
+        summary = evaluator.run()
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
