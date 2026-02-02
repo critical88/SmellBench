@@ -122,7 +122,7 @@ def get_repo_name(spec):
         repo_name = spec['src_path'].split("/")[-1]
     return repo_name
 
-def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False, use_shell=False):
+def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False, use_shell=False, timeout=None):
     env_name = ""
     if "env_name" in spec:
         env_name = spec['env_name']
@@ -138,7 +138,7 @@ def conda_exec_cmd(cmds, spec, cwd=None, envs=None, capture_output=False, use_sh
         final_cmd = [cmd for cmd in final_cmd if cmd]
         if use_shell:
             final_cmd = " ".join(final_cmd)
-        process = subprocess.run(final_cmd, text=True, capture_output=capture_output, cwd=cwd, env=envs, shell=use_shell)
+        process = subprocess.run(final_cmd, text=True, capture_output=capture_output, cwd=cwd, env=envs, shell=use_shell, timeout=timeout)
         if process.returncode != 0:
             return process
     return process

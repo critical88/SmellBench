@@ -66,7 +66,7 @@ def run_project_tests(project_name, project_path, test_file_paths, envs={}, test
             # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
             # i += 1
             cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
-            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True)
+            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True, timeout=20)
             # result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
             if result.returncode != 0:
                 return False, result.stdout
@@ -78,7 +78,7 @@ def run_project_tests(project_name, project_path, test_file_paths, envs={}, test
             #     test_func.extend([f'--ignore={p}' for p in ignore_test])
             # result = subprocess.run(['pytest','-x'] + test_func, cwd='.', capture_output=True, text=True, env=env)
         return result.returncode == 0, result.stdout
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error running tests: {e}")
         return False, str(e)
 
