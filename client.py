@@ -460,7 +460,6 @@ class CodeXClient(CommandAgentClient):
         max_number = -1
         files = []
         for event_file in Path(os.path.join(base_dir, "events")).rglob("event*.json"):
-            event_file = str(event_file)
             ord = int(event_file.name.split("-")[1])
             files.append((event_file, ord))
             
@@ -472,7 +471,7 @@ class CodeXClient(CommandAgentClient):
                 event_ret = json.load(f)
             raw_response.append(event_ret)
             if event_ret['kind'] == "MessageEvent":
-                ord = int(event_file.split("-")[1])
+                ord = int(event_file.name.split("-")[1])
                 if ord > max_number:
                     # the last message is the final content
                     content = event_ret['llm_message']['content'][0]['text']
@@ -483,7 +482,7 @@ class CodeXClient(CommandAgentClient):
                 if not event_ret['observation']['is_error']:
                     tool_call_success += 1
             elif "Error" in event_ret['kind']:
-                ord = int(event_file.split("-")[1])
+                ord = int(event_file.name.split("-")[1])
                 if ord > max_number:
                     # the last message is the final content
                     content = event_ret['detail']
