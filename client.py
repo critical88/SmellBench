@@ -334,7 +334,7 @@ class OpenHandsClient(CommandAgentClient):
         conversationID = ""
         for row in output_text.split("\n")[-5:]:
             if row.startswith("Conversation ID"):
-                conversationID = row.strip("Conversation ID:").strip()
+                conversationID = row.replace("Conversation ID:", "").strip()
                 break
         if not conversationID:
             raise Exception("Parsing Conversation ID failed.")
