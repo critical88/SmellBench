@@ -62,12 +62,12 @@ sample_rules = {
         "hard":10,
         "duplicated":2
     },
-    # "sympy":{
-    #     "simple": 8,
-    #     "medium": 12,
-    #     "hard":16,
-    #     "duplicated":2
-    # },
+    "sympy":{
+        "simple": 8,
+        "medium": 12,
+        "hard":16,
+        "duplicated":2
+    },
 }
 benchmark_file = "output/benchmark.jsonl"
 benchmark = []
@@ -114,4 +114,4 @@ for repo_name, rules in sample_rules.items():
 
 with open(benchmark_file, "w") as f:
     for b in benchmark:
-        f.write(json.dumps(b) + "\n")
+        f.write(json.dumps(b, indent=2) + "\n")
