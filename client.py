@@ -227,7 +227,8 @@ class CommandAgentClient(AgentClient):
                 # input=prompt,
                 text=True, 
                 capture_output=True,
-                env=envs
+                env=envs,
+                timeout=60*10
             )
         else:
             process = subprocess.run(
@@ -236,7 +237,8 @@ class CommandAgentClient(AgentClient):
                 input=prompt,
                 text=True, 
                 capture_output=True,
-                env=envs
+                env=envs,
+                timeout=60*10
             )
         if process.returncode != 0:
             raise RuntimeError(
