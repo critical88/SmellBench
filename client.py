@@ -485,8 +485,11 @@ class CodeXClient(CommandAgentClient):
                 ord = int(event_file.name.split("-")[1])
                 if ord > max_number:
                     # the last message is the final content
-                    content = event_ret['detail']
-                    max_number = ord
+                    if 'detail' in event_ret:
+                        content = event_ret['detail']
+                        max_number = ord
+                    else:
+                        print("the unknown event type:" + event_ret['kind'])
         response = "\n".join([json.dumps(r) for r in raw_response])
         num_turns = len(raw_response)
         
