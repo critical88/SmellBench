@@ -461,7 +461,7 @@ class CodeXClient(CommandAgentClient):
         files = []
         for event_file in Path(os.path.join(base_dir, "events")).rglob("event*.json"):
             event_file = str(event_file)
-            ord = int(event_file.split("-")[1])
+            ord = int(event_file.name.split("-")[1])
             files.append((event_file, ord))
             
         ## reorder files
