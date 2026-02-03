@@ -362,7 +362,6 @@ class OpenHandsClient(CommandAgentClient):
         max_number = -1
         files = []
         for event_file in Path(os.path.join(base_dir, "events")).rglob("event*.json"):
-            event_file = str(event_file)
             ord = int(event_file.name.split("-")[1])
             files.append((event_file, ord))
             
