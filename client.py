@@ -341,7 +341,7 @@ class OpenHandsClient(CommandAgentClient):
         base_dir = os.path.expanduser(f"~/.openhands/conversations/{conversationID}")
         base_state_file = os.path.join(base_dir, "base_state.json")
         if not os.path.exists(base_state_file):
-            raise Exception("can't find the log files")
+            raise Exception("can't find the log files:" + conversationID)
         with open(base_state_file) as f:
             base_state = json.load(f)
         raw_response = []
