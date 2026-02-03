@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional, Tuple
 from openai import OpenAI
 from dataclasses import dataclass
 import json
+from pathlib import Path
 from dotenv import load_dotenv
 import shutil
 import shlex
@@ -169,6 +170,7 @@ class AgentClient(Client):
         self.api_duration = 0
         self.num_turns = 0
         self.model = None
+        self.input_in_command = False
 
     def _record_token_usage(self, response:AgentResponse):
         super()._record_token_usage(response) 
@@ -176,49 +178,81 @@ class AgentClient(Client):
         self.tool_call_success += response.tool_call_success
         self.api_duration += response.api_duration
         self.num_turns += response.num_turns
-
-    @abstractmethod
-    def _agent_command(self, model=None):
-        raise NotImplementedError("must implement the _agent_command")
     
     @abstractmethod
-    def _tackle_output_to_response(self, output_text, error_text)->AgentResponse:
+    def _tackle_output_to_response(self, output_text)->AgentResponse:
         raise NotImplementedError("must implement the '_tackle_output_to_response'")
 
-    
+    @abstractmethod
+    def send_request(self, prompt, model = None, cwd=None):
+        raise NotImplementedError("must implement the 'send_request'")
+
+
     def chat(self, prompt, model = None, *args, **kwrags)->LLMResponse:
         if 'project_repo' not in kwrags:
             raise ValueError("agent chat method must input 'project_repo'")
         project_repo = kwrags['project_repo']
-        model = model or self.model
-        command = self._agent_command(model)
-        command = shlex.split(command, posix=True)
-        agent_cmd = shutil.which(command[0]).replace("/", os.sep)
-        command[0] = agent_cmd
-        process = subprocess.run(
-            command,
-            cwd=project_repo,
-            input=prompt,
-            text=True, 
-            capture_output=True,
-        )
-        if process.returncode != 0:
-            raise RuntimeError(
-                f"Code agent command {' '.join(command)} failed with code {process.returncode}"
-            )
         
-        response = self._tackle_output_to_response(model, process.stdout, process.stderr)
+        model = model or self.model
+
+        response_text = self.send_request(prompt, model, cwd=project_repo)
+        
+        response = self._tackle_output_to_response(model, response_text)
 
         self._record_token_usage(response)
 
         return response
 
-class QwenCodeClient(AgentClient):
+class CommandAgentClient(AgentClient):
+    def __init__(self):
+        super().__init__()
+    
+    @abstractmethod
+    def _agent_command(self, model=None):
+        raise NotImplementedError("must implement the _agent_command")
+    
+    def send_request(self, prompt, model = None, cwd=None):
+        envs = os.environ.copy()
+        command = self._agent_command(model)
+        if isinstance(command, Tuple):
+            command, add_envs = command
+            envs.update(add_envs)
+        command = shlex.split(command, posix=True)
+        agent_cmd = shutil.which(command[0]).replace("/", os.sep)
+        command[0] = agent_cmd
+        if self.input_in_command:
+            process = subprocess.run(
+                command + [prompt],
+                cwd=cwd,
+                # input=prompt,
+                text=True, 
+                capture_output=True,
+                env=envs
+            )
+        else:
+            process = subprocess.run(
+                command,
+                cwd=cwd,
+                input=prompt,
+                text=True, 
+                capture_output=True,
+                env=envs
+            )
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"Code agent command {' '.join(command)} failed with code {process.returncode}"
+            )
+        
+        return process.stdout
+    
+
+class QwenCodeClient(CommandAgentClient):
     def __init__(self, model=None):
         super().__init__()
         self.model = model or os.getenv("QWEN_CODE_MODEL")
         self.api_key = os.getenv("QWEN_CODE_API_KEY")
         self.base_url = os.getenv("QWEN_CODE_BASE_URL")
+        self.input_in_command = False
 
     def _agent_command(self, model=None):
         cmd = "qwen -p --model {model} --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
@@ -226,7 +260,7 @@ class QwenCodeClient(AgentClient):
         cmd = cmd.format(model=model, api_key=self.api_key, base_url=self.base_url)
         return cmd
     
-    def _tackle_output_to_response(self, model, output_text, error_text)->AgentResponse:
+    def _tackle_output_to_response(self, model, output_text)->AgentResponse:
         content = ""
         response = None
         prompt_tokens = 0
@@ -260,8 +294,105 @@ class QwenCodeClient(AgentClient):
                     duration = o['duration_ms'] / 1000
                     num_turns = o['num_turns']
                     api_duration = o['duration_api_ms'] / 1000
-        elif error_text:
-            content = error_text
+        
+        return AgentResponse(
+                content=content,
+                model=model,
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cache_tokens=cache_tokens,
+                duration=duration,
+                num_turns=num_turns,
+                tool_calls=tool_calls,
+                tool_call_success=tool_call_success,
+                api_duration=api_duration
+            )
+
+class OpenHandsClient(CommandAgentClient):
+    def __init__(self, model=None):
+        super().__init__()
+        self.model = model or os.getenv("OPENHANDS_MODEL")
+        self.api_key = os.getenv("OPENHANDS_API_KEY")
+        self.base_url = os.getenv("OPENHANDS_BASE_URL")
+        self.input_in_command = True
+
+    
+    def _agent_command(self, model=None):
+        cmd = "openhands --headless  --json --always-approve --override-with-envs -t"
+        model = model or self.model
+
+        envs = {
+            "LLM_MODEL": "openai/" + model,
+            "LLM_API_KEY": self.api_key,
+            "LLM_BASE_URL": self.base_url
+        }
+        return cmd, envs
+
+    def _tackle_output_to_response(self, model, output_text)->AgentResponse:
+        conversationID = ""
+        for row in output_text.split("\n")[-5:]:
+            if row.startswith("Conversation ID"):
+                conversationID = row.strip("Conversation ID:").strip()
+                break
+        if not conversationID:
+            raise Exception("Parsing Conversation ID failed.")
+        base_dir = os.path.expanduser(f"~/.openhands/conversations/{conversationID}")
+        base_state_file = os.path.join(base_dir, "base_state.json")
+        if not os.path.exists(base_state_file):
+            raise Exception("can't find the log files")
+        with open(base_state_file) as f:
+            base_state = json.load(f)
+        raw_response = []
+        
+        content = ""
+        
+        token_usage = base_state['stats']['usage_to_metrics']['agent']['accumulated_token_usage']
+        latencies = base_state['stats']['usage_to_metrics']['agent']['response_latencies']
+        prompt_tokens = token_usage['prompt_tokens']
+        completion_tokens = token_usage['completion_tokens']
+        total_tokens = prompt_tokens + completion_tokens
+        cache_tokens = token_usage['cache_read_tokens'] + token_usage['cache_write_tokens']
+        tool_calls = 0
+        tool_call_success = 0
+        duration = sum([l['latency'] for l in latencies]) # a compromising result
+        api_duration= sum([l['latency'] for l in latencies])
+
+        max_number = -1
+        files = []
+        for event_file in Path(os.path.join(base_dir, "events")).rglob("event*.json"):
+            event_file = str(event_file)
+            ord = int(event_file.split("-")[1])
+            files.append((event_file, ord))
+            
+        ## reorder files
+        files.sort(key=lambda x: x[1])
+
+        for event_file, ord in files:
+            with open(event_file) as f:
+                event_ret = json.load(f)
+            raw_response.append(event_ret)
+            if event_ret['kind'] == "MessageEvent":
+                ord = int(event_file.split("-")[1])
+                if ord > max_number:
+                    # the last message is the final content
+                    content = event_ret['llm_message']['content'][0]['text']
+                    max_number = ord
+            elif event_ret['kind'] == "ActionEvent":
+                tool_calls += 1
+            elif event_ret['kind'] == "ObservationEvent":
+                if not event_ret['observation']['is_error']:
+                    tool_call_success += 1
+            elif "Error" in event_ret['kind']:
+                ord = int(event_file.split("-")[1])
+                if ord > max_number:
+                    # the last message is the final content
+                    content = event_ret['detail']
+                    max_number = ord
+        response = "\n".join([json.dumps(r) for r in raw_response])
+        num_turns = len(raw_response)
+        
         
         return AgentResponse(
                 content=content,
@@ -279,6 +410,199 @@ class QwenCodeClient(AgentClient):
             )
 
 
+class CodeXClient(CommandAgentClient):
+    def __init__(self, model=None):
+        super().__init__()
+        self.model = model or os.getenv("CODEX_MODEL")
+        self.api_key = os.getenv("CODEX_API_KEY")
+        self.provider = os.getenv("CODEX_PROVIDER")
+        self.input_in_command = False
+
+    
+    def _agent_command(self, model=None):
+        model = model or self.model
+        cmd = f"codex -m {model} -c model_provider={self.provider} e --yolo  --json"
+
+        envs = {
+            "CODEX_API_KEY":  self.api_key,
+        }
+        return cmd, envs
+
+    def _tackle_output_to_response(self, model, output_text)->AgentResponse:
+        conversationID = ""
+        for row in output_text.split("\n")[-5:]:
+            if row.startswith("Conversation ID"):
+                conversationID = row.strip("Conversation ID:").strip()
+                break
+        if not conversationID:
+            raise Exception("Parsing Conversation ID failed.")
+        base_dir = os.path.expanduser(f"~/.openhands/conversations/{conversationID}")
+        base_state_file = os.path.join(base_dir, "base_state.json")
+        if not os.path.exists(base_state_file):
+            raise Exception("can't find the log files")
+        with open(base_state_file) as f:
+            base_state = json.load(f)
+        raw_response = []
+        
+        content = ""
+        
+        token_usage = base_state['stats']['usage_to_metrics']['agent']['accumulated_token_usage']
+        latencies = base_state['stats']['usage_to_metrics']['agent']['response_latencies']
+        prompt_tokens = token_usage['prompt_tokens']
+        completion_tokens = token_usage['completion_tokens']
+        total_tokens = prompt_tokens + completion_tokens
+        cache_tokens = token_usage['cache_read_tokens'] + token_usage['cache_write_tokens']
+        tool_calls = 0
+        tool_call_success = 0
+        duration = sum([l['latency'] for l in latencies]) # a compromising result
+        api_duration= sum([l['latency'] for l in latencies])
+
+        max_number = -1
+        files = []
+        for event_file in Path(os.path.join(base_dir, "events")).rglob("event*.json"):
+            event_file = str(event_file)
+            ord = int(event_file.split("-")[1])
+            files.append((event_file, ord))
+            
+        ## reorder files
+        files.sort(key=lambda x: x[1])
+
+        for event_file, ord in files:
+            with open(event_file) as f:
+                event_ret = json.load(f)
+            raw_response.append(event_ret)
+            if event_ret['kind'] == "MessageEvent":
+                ord = int(event_file.split("-")[1])
+                if ord > max_number:
+                    # the last message is the final content
+                    content = event_ret['llm_message']['content'][0]['text']
+                    max_number = ord
+            elif event_ret['kind'] == "ActionEvent":
+                tool_calls += 1
+            elif event_ret['kind'] == "ObservationEvent":
+                if not event_ret['observation']['is_error']:
+                    tool_call_success += 1
+            elif "Error" in event_ret['kind']:
+                ord = int(event_file.split("-")[1])
+                if ord > max_number:
+                    # the last message is the final content
+                    content = event_ret['detail']
+                    max_number = ord
+        response = "\n".join([json.dumps(r) for r in raw_response])
+        num_turns = len(raw_response)
+        
+        
+        return AgentResponse(
+                content=content,
+                model=model,
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cache_tokens=cache_tokens,
+                duration=duration,
+                num_turns=num_turns,
+                tool_calls=tool_calls,
+                tool_call_success=tool_call_success,
+                api_duration=api_duration
+            )
+
+
+# class OpenHandsClient(AgentClient):
+    
+#     def __init__(self, model=None):
+#         from openhands.sdk import LLM, Agent, Conversation, Tool
+#         from openhands.tools.file_editor import FileEditorTool
+#         from openhands.tools.task_tracker import TaskTrackerTool
+#         from openhands.tools.terminal import TerminalTool
+#         from openhands.tools.planning_file_editor import PlanningFileEditorTool
+#         from openhands.tools.grep import GrepTool
+#         from openhands.tools.glob import GlobTool
+#         from openhands.tools.preset import get_gemini_agent
+#         super().__init__()
+#         self.model = model or os.getenv("OPENHANDS_MODEL")
+#         self.api_key = os.getenv("OPENHANDS_API_KEY")
+#         self.base_url = os.getenv("OPENHANDS_BASE_URL")
+#         self.input_in_command = True
+#         llm = LLM(
+#             model="openai/" + self.model, #OPENAI Compatible API
+#             api_key=self.api_key,
+#             base_url=self.base_url
+#         )
+#         # self.agent = get_gemini_agent(llm, cli_mode=True)
+        
+#         self.agent = Agent(
+#             llm=llm,
+#             tools=[
+#                 Tool(name=TerminalTool.name),
+#                 Tool(name=FileEditorTool.name),
+#                 Tool(name=TaskTrackerTool.name),
+#                 Tool(name=PlanningFileEditorTool.name),
+#                 Tool(name=GrepTool.name),
+#                 Tool(name=GlobTool.name)
+#             ]
+#         )
+    
+#     def send_request(self, prompt, model=None, cwd=None):
+#         from openhands.sdk import Conversation
+#         from openhands.sdk.security.confirmation_policy import AlwaysConfirm
+#         conversation = Conversation(agent=self.agent, workspace=cwd)
+#         conversation.set_confirm_policy(AlwaysConfirm())
+#         conversation.send_message(prompt)
+#         response = conversation.run()
+#         return response
+    
+    
+#     def _tackle_output_to_response(self, model, output_text)->AgentResponse:
+#         content = ""
+#         response = None
+#         prompt_tokens = 0
+#         completion_tokens = 0
+#         total_tokens = 0
+#         cache_tokens = 0
+#         tool_calls = 0
+#         tool_call_success = 0
+#         duration = 0
+#         api_duration= 0 
+#         num_turns = 0
+#         if output_text:
+#             response = output_text
+#             output_stream_text_list = output_text.split("\n")
+#             for o in output_stream_text_list:
+#                 if not o:
+#                     continue
+#                 o = json.loads(o)
+#                 if 'message' in o and o['message']['content']:
+#                     tool_content = o['message']['content'][0]
+#                     if tool_content['type'] == 'tool_result':
+#                         tool_calls +=1
+#                         if not tool_content['is_error']:
+#                             tool_call_success += 1 
+#                 elif o['type'] == 'result':
+#                     content = o['result']
+#                     prompt_tokens = o['usage']['input_tokens']
+#                     completion_tokens = o['usage']['output_tokens']
+#                     total_tokens = o['usage'].get('total_tokens', 0)
+#                     cache_tokens = o['usage'].get('cache_read_input_tokens', 0)
+#                     duration = o['duration_ms'] / 1000
+#                     num_turns = o['num_turns']
+#                     api_duration = o['duration_api_ms'] / 1000
+        
+        
+#         return AgentResponse(
+#                 content=content,
+#                 model=model,
+#                 raw_response=response,
+#                 prompt_tokens=prompt_tokens,
+#                 completion_tokens=completion_tokens,
+#                 total_tokens=total_tokens,
+#                 cache_tokens=cache_tokens,
+#                 duration=duration,
+#                 num_turns=num_turns,
+#                 tool_calls=tool_calls,
+#                 tool_call_success=tool_call_success,
+#                 api_duration=api_duration
+#             )
         
 class AntClient(LLMClient):
     
@@ -416,6 +740,14 @@ class LLMFactory:
             if not model:
                 model = os.getenv("QWEN_CODE_MODEL")
             return QwenCodeClient(model)
+        elif client_type.lower() == "openhands":
+            if not model:
+                model = os.getenv("OPENHANDS_MODEL")
+            return OpenHandsClient(model)
+        elif client_type.lower() == "codex":
+            if not model:
+                model = os.getenv("CODEX_MODEL")
+            return CodeXClient(model)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 

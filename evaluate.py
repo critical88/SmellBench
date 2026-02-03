@@ -162,7 +162,9 @@ def collect_code_blocks(case: Dict, use_code_agent:bool=False) -> List[str]:
     for i, item in enumerate(value):
         code = f"####{i+1}\n"
         if use_code_agent:
-            code += f"`file_path:{os.sep.join(item['module_path'].split('.'))}.py`, `class_name={item['class_name']}`, `method_name={item['method_name']}`"
+            rel_path = _module_relative_path(item['module_path'], case['settings']['src_path'])
+            rel_path = str(rel_path)
+            code += f"`file_path:{rel_path}`, `class_name={item['class_name']}`, `method_name={item['method_name']}`"
         else:
             code += f"\nthe related code is: \n```python\n{item['code']}\n```"
         blocks.append(code)
@@ -596,6 +598,16 @@ def match_segments(
 
 
 
+def _module_relative_path(module_path: str, src_path:str) -> Path:
+    cleaned = (module_path or "").strip(".")
+    src_tail = Path(src_path).parts[-1] if Path(src_path).parts else src_path
+    if cleaned.startswith(f"{src_tail}."):
+        cleaned = cleaned[len(src_tail) + 1 :]
+    if not cleaned:
+        rel = Path("__init__.py")
+    else:
+        rel = Path(cleaned.replace(".", os.sep) + ".py")
+    return Path(src_path) / rel
     
 
 
@@ -722,16 +734,6 @@ class RefactorEvaluator:
 
     
 
-    def _module_relative_path(self, module_path: str, src_path:str) -> Path:
-        cleaned = (module_path or "").strip(".")
-        src_tail = Path(src_path).parts[-1] if Path(src_path).parts else src_path
-        if cleaned.startswith(f"{src_tail}."):
-            cleaned = cleaned[len(src_tail) + 1 :]
-        if not cleaned:
-            rel = Path("__init__.py")
-        else:
-            rel = Path(cleaned.replace(".", os.sep) + ".py")
-        return Path(src_path) / rel
 
     def _write_ground_truth_files(self, case: Dict[str, Any]) -> List[str]:
         written: List[str] = []
@@ -740,7 +742,7 @@ class RefactorEvaluator:
             module_path = file_entry.get("module_path")
             if not module_path:
                 continue
-            rel_path = self._module_relative_path(module_path, case['settings']['src_path'])
+            rel_path = _module_relative_path(module_path, case['settings']['src_path'])
             abs_path = project_repo / rel_path
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             abs_path.write_text(file_entry.get("code", ""), encoding="utf-8")
@@ -1050,7 +1052,7 @@ class RefactorEvaluator:
         removal_records: List[Dict[str, Any]] = []
         src_path = case['settings']['src_path']
         for module_path, entries in callee_map.items():
-            rel_path = self._module_relative_path(module_path, src_path)
+            rel_path = _module_relative_path(module_path, src_path)
             abs_path = project_repo / rel_path
             if not abs_path.exists():
                 continue
@@ -1115,7 +1117,7 @@ class RefactorEvaluator:
                 if placeholder not in source:
                     continue
                 if module_path:
-                    rel_path = self._module_relative_path(module_path, src_path)
+                    rel_path = _module_relative_path(module_path, src_path)
                     expected_path = project_repo / rel_path
                     if expected_path.resolve() != path.resolve():
                         continue
@@ -1191,7 +1193,7 @@ class RefactorEvaluator:
                     candidate_modules.add(module_path)
         module_file_map: Dict[str, Path] = {}
         for module_path in candidate_modules:
-            rel_path = self._module_relative_path(module_path, src_path)
+            rel_path = _module_relative_path(module_path, src_path)
             abs_path = project_repo / rel_path
             if not abs_path.exists() or abs_path.suffix.lower() != ".py":
                 continue
@@ -1395,7 +1397,7 @@ class RefactorEvaluator:
         if not prepare_to_run(spec):
             return
         ground_truth = parse_ground_truth(case, cascade=True)
-        callees = [f"file_path={os.sep.join(c.meta['position']['module_path'].split('.'))}.py, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
+        callees = [f"file_path={str(_module_relative_path(c.meta['position']['module_path'], src_path))}, class_name={c.meta['position']['class_name']}, method_name={c.meta['position']['method_name']}" for c in ground_truth['callees']] 
         test_cmd = create_test_command(test_file_paths=case['testsuites'], test_cmd=case['settings']['test_cmd'], envs=case['settings']['envs'], use_envs=True) if self.args.use_test else DEFAULT_FORBID_TEST
         prompt = build_prompt(case, use_code_agent=self.use_code_agent, test_cmd=test_cmd, expected_callees=callees)
         prompt_hash = hashlib.md5(prompt.encode("utf-8")).hexdigest()
