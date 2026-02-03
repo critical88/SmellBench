@@ -1350,6 +1350,26 @@ class RefactorEvaluator:
                 if instance_id in ret:
                     caseResult = CaseResult(**ret[instance_id])
                     return caseResult
+                
+    def require_lock(self, project_name):
+        locks = []
+        if os.path.exists(".repo_lock"):
+            with open(".repo_lock") as f:
+                locks = [l.strip() for l in f.readlines()]
+        if project_name in locks:
+            return False
+        locks.append(project_name)
+        with open(".repo_lock", "w") as f:
+            f.write("\n".join(locks))
+        return True
+    def unlock(self, project_name):
+        locks = []
+        if os.path.exists(".repo_lock"):
+            with open(".repo_lock") as f:
+                locks = [l.strip() for l in f.readlines()]
+        locks = [x for x in locks if x != project_name]
+        with open(".repo_lock", "w") as f:
+            f.write("\n".join(locks))
 
     def run(self) -> Dict[str, Any]:
         total_cases = len(self.cases)
@@ -1358,21 +1378,27 @@ class RefactorEvaluator:
         cases = []
 
         for index, case in enumerate(self.cases):
-            if self.limit is not None and index >= self.limit:
-                break
+            
             project_name = case['name']
+            
             if self.args and self.args.project_name is not None:
                 if self.args.project_name != project_name:
                     continue
             instance_id = case['instance_id']
             result = self.read_cache_result(case)
             if result is None:
+                if not self.require_lock(project_name):
+                    self._log("do not get the lock of " + project_name)
+                    continue
                 self._log(f"Processing {instance_id}")
                 try:
                     result = self._process_case(instance_id, case)
                     self.cache_result(case, result)
-                except Exception:
+                except Exception as e:
+                    self._log(e)
                     result = None
+                finally:
+                    self.unlock(project_name)
             if result is None:
                 continue
             cases.append(case)

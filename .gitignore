@@ -9,3 +9,4 @@ run/refactor_eval
 *.diff
 *.xml
 *.jsonl
+.repo_lock
