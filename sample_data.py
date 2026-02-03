@@ -114,4 +114,4 @@ for repo_name, rules in sample_rules.items():
 
 with open(benchmark_file, "w") as f:
     for b in benchmark:
-        f.write(json.dumps(b, indent=2) + "\n")
+        f.write(json.dumps(b) + "\n")
