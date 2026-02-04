@@ -669,7 +669,6 @@ class RefactorEvaluator:
         self.output_dir = Path(args.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        self.limit = args.limit
         self.verbose = args.verbose
         
         self.model = args.model
@@ -1280,7 +1279,7 @@ class RefactorEvaluator:
                     intermit_commit_id = intermit_commit_id.strip()
             
             is_cached, cached_info = self._read_cache_code_agent(case, prompt_hash)
-            if is_cached:
+            if (not self.args.force_request) and is_cached:
                 self._log("reading cache")
                 output_text, response, diff_files, diff_text = cached_info
                 if output_text:
@@ -1386,7 +1385,7 @@ class RefactorEvaluator:
                     continue
             instance_id = case['instance_id']
             result = self.read_cache_result(case)
-            if result is None:
+            if self.args.force_request or result is None:
                 if not self.require_lock(project_name):
                     self._log("do not get the lock of " + project_name)
                     continue
@@ -1570,8 +1569,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default=None, help="Project name")
     parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)
     parser.add_argument("--use-test", default=False, type=bool, help="instruct model whether to use unittest to fix errors")
+    parser.add_argument("--force_request", default=False, action="store_true")
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
-    parser.add_argument("--limit", type=int, help="Process at most this many cases.")
     parser.add_argument("--similarity-threshold", type=float, default=0.7, help="Similarity threshold used for F1 matching.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")
     return parser.parse_args()
