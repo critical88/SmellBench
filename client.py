@@ -228,7 +228,7 @@ class CommandAgentClient(AgentClient):
                 text=True, 
                 capture_output=True,
                 env=envs,
-                timeout=60*10
+                timeout=10 * 60
             )
         else:
             process = subprocess.run(
@@ -238,7 +238,7 @@ class CommandAgentClient(AgentClient):
                 text=True, 
                 capture_output=True,
                 env=envs,
-                timeout=60*10
+                timeout=10 * 60
             )
         if process.returncode != 0:
             raise RuntimeError(
@@ -249,11 +249,11 @@ class CommandAgentClient(AgentClient):
     
 
 class QwenCodeClient(CommandAgentClient):
-    def __init__(self, model=None):
+    def __init__(self, model=None, api_key=None, base_url=None):
         super().__init__()
         self.model = model or os.getenv("QWEN_CODE_MODEL")
-        self.api_key = os.getenv("QWEN_CODE_API_KEY")
-        self.base_url = os.getenv("QWEN_CODE_BASE_URL")
+        self.api_key = api_key or os.getenv("QWEN_CODE_API_KEY")
+        self.base_url = base_url or os.getenv("QWEN_CODE_BASE_URL")
         self.input_in_command = False
 
     def _agent_command(self, model=None):
@@ -313,11 +313,11 @@ class QwenCodeClient(CommandAgentClient):
             )
 
 class OpenHandsClient(CommandAgentClient):
-    def __init__(self, model=None):
+    def __init__(self, model=None, api_key=None, base_url=None):
         super().__init__()
         self.model = model or os.getenv("OPENHANDS_MODEL")
-        self.api_key = os.getenv("OPENHANDS_API_KEY")
-        self.base_url = os.getenv("OPENHANDS_BASE_URL")
+        self.api_key = api_key or os.getenv("OPENHANDS_API_KEY")
+        self.base_url = base_url or os.getenv("OPENHANDS_BASE_URL")
         self.input_in_command = True
 
     
@@ -743,11 +743,11 @@ class LLMFactory:
         elif client_type.lower() == 'qwen_code':
             if not model:
                 model = os.getenv("QWEN_CODE_MODEL")
-            return QwenCodeClient(model)
+            return QwenCodeClient(model=model, api_key=api_key, base_url=base_url)
         elif client_type.lower() == "openhands":
             if not model:
                 model = os.getenv("OPENHANDS_MODEL")
-            return OpenHandsClient(model)
+            return OpenHandsClient(model=model, api_key=api_key, base_url=base_url)
         elif client_type.lower() == "codex":
             if not model:
                 model = os.getenv("CODEX_MODEL")

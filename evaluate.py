@@ -675,7 +675,7 @@ class RefactorEvaluator:
         self.llm_model = args.llm_model
         self.llm_client: Optional[Client] = None
 
-        self.llm_client = LLMFactory.create_client(client_type=self.model, model=self.llm_model)
+        self.llm_client = LLMFactory.create_client(client_type=self.model, model=self.llm_model, api_key=args.api_key, base_url=args.base_url)
         self.use_code_agent = isinstance(self.llm_client, AgentClient)
         self.results: List[CaseResult] = []
 
@@ -1296,15 +1296,17 @@ class RefactorEvaluator:
                     _run_git_command(["commit", "-m", f"[remove] {instance_id}"], cwd=project_repo)
                     
                 # with disableGitTools(project_repo):
+                ex = None
                 try:
                     response = self.llm_client.chat(prompt, project_repo=project_repo)
                     invoke_success = response is not None
                     self._log(response.content)
-                except Exception as e:
-                    print(e)
+                except Exception as exp:
+                    print(exp)
+                    ex = exp
                     invoke_success = False
                 if not invoke_success:
-                    return None, False
+                    return ex, False
                 # self._restore_ground_truth_callees(case, removal_records)
                 if intermit_commit_id:
                     diff_text = _run_git_command(["diff", intermit_commit_id], cwd=project_repo).stdout
@@ -1326,7 +1328,7 @@ class RefactorEvaluator:
         return prediction, success
 
     def cache_result(self, case, caseResult:CaseResult):
-        if caseResult is None:
+        if caseResult is None or isinstance(caseResult, Exception):
             return
         file = Path("cache") / f"{self.model}_{self.llm_model}_result.json"
         ret = {}
@@ -1377,7 +1379,6 @@ class RefactorEvaluator:
         cases = []
 
         for index, case in enumerate(self.cases):
-            
             project_name = case['name']
             
             if self.args and self.args.project_name is not None:
@@ -1400,10 +1401,11 @@ class RefactorEvaluator:
                     self.unlock(project_name)
             if result is None:
                 continue
-            cases.append(case)
             self.results.append(result)
+            cases.append(case)
+            
         per_case_path = self.output_dir / "per_case_results.json"
-        serialized = [dataclasses.asdict(result) for result in self.results]
+        serialized = [dataclasses.asdict(result) if not isinstance(result, Exception) else {"instance_id": case['instance_id'], "exception": str(result.__class__)} for case, result in zip(cases, self.results)]
         per_case_path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
         summary = self._summarize(cases)
         summary_path = self.output_dir / "evaluation_summary.json"
@@ -1432,6 +1434,8 @@ class RefactorEvaluator:
             prediction, success = self._run_code_agent_workflow(instance_id, case, prompt, prompt_hash)
             if prediction is None:
                 return None
+            elif isinstance(prediction, Exception):
+                return prediction
         else:
             payload = self._predict(prompt, prompt_hash, instance_id, case)
             prediction = parse_model_prediction(payload["response_text"], case)
@@ -1533,18 +1537,22 @@ class RefactorEvaluator:
                 "output_dir": str(self.output_dir),
             }
             summary["averages"] = {
-                "caller_accuracy": mean_or_none(result.caller_accuracy for result in results),
-                "callee_match_score": mean_or_none(result.callee_match_score for result in results),
-                "callee_precision": mean_or_none(result.callee_precision for result in results),
-                "callee_recall": mean_or_none(result.callee_recall for result in results),
-                "callee_f1": mean_or_none(result.callee_f1 for result in results),
+                "caller_accuracy": mean_or_none(result.caller_accuracy for result in results if not isinstance(result, Exception)),
+                "callee_match_score": mean_or_none(result.callee_match_score for result in results if not isinstance(result, Exception)),
+                "callee_precision": mean_or_none(result.callee_precision for result in results if not isinstance(result, Exception)),
+                "callee_recall": mean_or_none(result.callee_recall for result in results if not isinstance(result, Exception)),
+                "callee_f1": mean_or_none(result.callee_f1 for result in results if not isinstance(result, Exception)),
             }
                 
-            test_values = [result.test_passed for result in results if result.test_passed is not None]
+            test_values = [result.test_passed for result in results if not isinstance(result, Exception) and result.test_passed is not None]
             if test_values:
                 summary["test_pass_rate"] = sum(1 for value in test_values if value) / len(test_values)
             else:
-                summary["test_pass_rate"] = None
+                summary["test_pass_rate"] = 0
+            if len(results) > 0:
+                summary['exec_success_rate'] = len([r for r in results if not isinstance(r, Exception)]) / len(results)
+            else:
+                summary['exec_success_rate'] = 0
             return summary
         summary = {}
         summary['total'] = summary_result(self.results)
@@ -1569,6 +1577,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default=None, help="Project name")
     parser.add_argument("--benchmark_file", default="output/benchmark.jsonl", type=str)
     parser.add_argument("--use-test", default=False, type=bool, help="instruct model whether to use unittest to fix errors")
+    parser.add_argument("--api_key", default=None, type=str, help="will overwrite the config in .env, e.g., QWEN_CODE_API_KEY for qwen_code")
+    parser.add_argument("--base_url", default=None, type=str, help="will overwrite the config in .env, e.g., QWEN_CODE_BASE_URL for qwen_code")
     parser.add_argument("--force_request", default=False, action="store_true")
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--similarity-threshold", type=float, default=0.7, help="Similarity threshold used for F1 matching.")
