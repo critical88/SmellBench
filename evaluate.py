@@ -1404,11 +1404,11 @@ class RefactorEvaluator:
             self.results.append(result)
             cases.append(case)
             
-        per_case_path = self.output_dir / "per_case_results.json"
+        per_case_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_per_case_results.json"
         serialized = [dataclasses.asdict(result) if not isinstance(result, Exception) else {"instance_id": case['instance_id'], "exception": str(result.__class__)} for case, result in zip(cases, self.results)]
         per_case_path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
         summary = self._summarize(cases)
-        summary_path = self.output_dir / "evaluation_summary.json"
+        summary_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_evaluation_summary.json"
         summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
         return summary
 
