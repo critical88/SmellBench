@@ -107,7 +107,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
                     print(f"Failed to replace file {file_path}")
                     return False
         # Run tests
-        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
+        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd, timeout=20)
     
         if success:
             # print(f"Tests passed for {project_name}")
