@@ -73,6 +73,7 @@ class PredictionArtifacts:
     test_passed: Optional[bool]
     raw_response: str
     parsed_payload: Optional[Dict[str, Any]]
+    response: Optional[Dict] = None
     error: Optional[str] = None
 
 
@@ -84,6 +85,7 @@ class CaseResult:
     callee_precision: Optional[float]
     callee_recall: Optional[float]
     callee_f1: Optional[float]
+    response_stat: Optional[Dict]
     callee_match_score: Optional[float]
     test_passed: Optional[bool]
     details: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -1162,6 +1164,7 @@ class RefactorEvaluator:
         case: Dict[str, Any],
         diff_files: List[str],
         diff_text: str,
+        response: LLMResponse,
     ) -> PredictionArtifacts:
         project_repo = self.get_project_path(case)
         changed_modules = self._modules_from_paths(case, diff_files)
@@ -1245,6 +1248,7 @@ class RefactorEvaluator:
             caller_segments=caller_segments,
             callee_segments=callee_segments,
             test_passed=None,
+            response=self.unpack_response(response),
             raw_response=diff_text,
             parsed_payload={
                 "backend": "code_agent",
@@ -1317,9 +1321,10 @@ class RefactorEvaluator:
                     diff_output = _run_git_command(["diff", "--name-only"], cwd=project_repo).stdout
                 diff_files = [line.strip() for line in diff_output.splitlines() if line.strip()]
                 self._cache_code_agent_diff(case, prompt_hash, response, diff_text, diff_files)
-            self._log(str(self.unpack_response(response)))
+            statis = self.unpack_response(response)
+            self._log(str(statis))
             self._log("parsing predictions")
-            prediction = self._build_prediction_from_repo(case, diff_files, diff_text)
+            prediction = self._build_prediction_from_repo(case, diff_files, diff_text, response)
             self._log("running testunit")
             success, output = run_project_tests(project_name, project_repo, case["testsuites"], envs=case['settings']['envs'], test_cmd=case['settings']['test_cmd'])
             self._log(f"testunit {'pass' if success else 'fail'}")
@@ -1389,7 +1394,7 @@ class RefactorEvaluator:
                     continue
             instance_id = case['instance_id']
             result = self.read_cache_result(case)
-            if self.args.force_request or result is None:
+            if True:
                 if not self.require_lock(project_name):
                     self._log("do not get the lock of " + project_name)
                     lines.append(case)
@@ -1412,6 +1417,7 @@ class RefactorEvaluator:
                 continue
             self.results.append(result)
             cases.append(case)
+            break
             
         per_case_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_per_case_results.json"
         serialized = [dataclasses.asdict(result) if not isinstance(result, Exception) else {"instance_id": case['instance_id'], "exception": str(result.__class__)} for case, result in zip(cases, self.results)]
@@ -1484,6 +1490,7 @@ class RefactorEvaluator:
                 callee_recall=callee_recall,
                 callee_f1=callee_f1,
                 match_scores=0.0,
+                response_stat=prediction.response if prediction is not None else None,
                 test_passed=success
             )
 
@@ -1508,6 +1515,7 @@ class RefactorEvaluator:
             callee_f1=callee_f1,
             callee_match_score=match_scores,
             test_passed=success,
+            response_stat=prediction.response if prediction is not None else None,
             details=details,
         )
 
@@ -1575,6 +1583,10 @@ class RefactorEvaluator:
         summary['long'] = summary_result(long_summary)
         duplicated_summary = [ret for ret, case in zip(self.results, cases) if (case['type'] == 'Duplicated')]
         summary['duplicated'] = summary_result(duplicated_summary)
+        datasets = set( [case['name'] for case in cases])
+        for d in datasets:
+            dataset_summary = summary_result([ret for ret, case in zip(self.results, cases) if (case['name'] == d)])
+            summary[d] = dataset_summary
         return summary
 
 def parse_args() -> argparse.Namespace:
