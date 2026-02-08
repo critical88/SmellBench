@@ -1303,7 +1303,6 @@ class RefactorEvaluator:
                 # with disableGitTools(project_repo):
                 ex = None
                 try:
-                    raise Exception("hhhh")
                     response = self.llm_client.chat(prompt, project_repo=project_repo)
                     invoke_success = response is not None
                     self._log(response.content)
@@ -1359,6 +1358,8 @@ class RefactorEvaluator:
                 ret = json.load(f)
                 if instance_id in ret:
                     if "exception" in ret[instance_id]:
+                        if ret[instance_id]['exception'] == "<class 'Exception'>":
+                            return None
                         return ret
                     caseResult = CaseResult(**ret[instance_id])
                     return caseResult
