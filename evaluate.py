@@ -1588,6 +1588,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    print(args)
     # args.use_code_agent = True
     llm_models = args.llm_model
     for llm_model in llm_models:

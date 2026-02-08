@@ -41,7 +41,7 @@ def create_test_command( test_file_paths=[], test_cmd="", envs=None):
         cmd = ["pytest", "-x"] + cmd
     return cmd
 
-def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd=""):
+def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
     spec = get_spec(project_name)
     """Run the project's test suite"""
     try:
@@ -66,7 +66,7 @@ def run_project_tests(project_name, project_path, test_file_paths, envs={}, test
             # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
             # i += 1
             cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
-            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True, timeout=20)
+            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True, timeout=timeout)
             # result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
             if result.returncode != 0:
                 return False, result.stdout
@@ -107,7 +107,7 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
                     print(f"Failed to replace file {file_path}")
                     return False
         # Run tests
-        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd)
+        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd, timeout=20)
     
         if success:
             # print(f"Tests passed for {project_name}")
