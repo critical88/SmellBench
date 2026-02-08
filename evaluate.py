@@ -1284,12 +1284,15 @@ class RefactorEvaluator:
                     intermit_commit_id = intermit_commit_id.strip()
             
             is_cached, cached_info = self._read_cache_code_agent(case, prompt_hash)
+            use_cache = False
             if (not self.args.force_request) and is_cached:
                 self._log("reading cache")
                 output_text, response, diff_files, diff_text = cached_info
+                if response is not None and response.num_turns > 3:
+                    use_cache = True
                 if output_text:
                     self._log(output_text, 1)
-            else:
+            if not use_cache:
                 # return None, False
                 self._log("use code agent")
                 # Hide reference callees before invoking the agent to avoid data leakage.
