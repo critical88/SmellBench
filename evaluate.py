@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import textwrap
 from codebleu import calc_codebleu
+import random
 import time 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -1331,7 +1332,6 @@ class RefactorEvaluator:
             self._log("running testunit")
             success, output = run_project_tests(project_name, project_repo, case["testsuites"], envs=case['settings']['envs'], test_cmd=case['settings']['test_cmd'], timeout=60)
             self._log(f"testunit {'pass' if success else 'fail'}")
-            
         finally:
             _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
         return prediction, success
@@ -1393,6 +1393,7 @@ class RefactorEvaluator:
         
         cases = []
         lines = self.cases.copy()
+        random.shuffle(lines)
         sleep_interval = 200
         acc_step = 0
         while len(lines) > 0:
