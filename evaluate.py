@@ -1303,6 +1303,7 @@ class RefactorEvaluator:
                 # with disableGitTools(project_repo):
                 ex = None
                 try:
+                    raise Exception("hhhh")
                     response = self.llm_client.chat(prompt, project_repo=project_repo)
                     invoke_success = response is not None
                     self._log(response.content)
@@ -1333,16 +1334,18 @@ class RefactorEvaluator:
             _run_git_command(["reset", "--hard", original_head], cwd=project_repo)
         return prediction, success
 
-    def cache_result(self, case, caseResult:CaseResult):
-        if caseResult is None or isinstance(caseResult, Exception):
+    def cache_result(self, case, caseResult:CaseResult|Dict):
+        if caseResult is None:
             return
         file = Path("cache") / f"{self.model}_{self.llm_model}_result.json"
         ret = {}
         if file.exists():
             with open(file) as f:
                 ret = json.load(f)
-        
-        ret[case['instance_id']] = {k: v for k, v in vars(caseResult).items()}
+        if isinstance(caseResult, Dict):
+            ret[case['instance_id']] = caseResult
+        else:
+            ret[case['instance_id']] = {k: v for k, v in vars(caseResult).items()}
 
         with open(file, "w") as f:
             f.write(json.dumps(ret))
@@ -1355,6 +1358,8 @@ class RefactorEvaluator:
             with open(file) as f:
                 ret = json.load(f)
                 if instance_id in ret:
+                    if "exception" in ret[instance_id]:
+                        return ret
                     caseResult = CaseResult(**ret[instance_id])
                     return caseResult
                 
@@ -1394,7 +1399,7 @@ class RefactorEvaluator:
                     continue
             instance_id = case['instance_id']
             result = self.read_cache_result(case)
-            if True:
+            if self.args.force_request or result is None:
                 if not self.require_lock(project_name):
                     self._log("do not get the lock of " + project_name)
                     lines.append(case)
@@ -1407,7 +1412,10 @@ class RefactorEvaluator:
                 self._log(f"Processing {instance_id}")
                 try:
                     result = self._process_case(instance_id, case)
+                    if isinstance(result, Exception):
+                        result = {"instance_id": case['instance_id'], "exception": str(result.__class__)}
                     self.cache_result(case, result)
+                    
                 except Exception as e:
                     self._log(e)
                     result = None
@@ -1417,9 +1425,11 @@ class RefactorEvaluator:
                 continue
             self.results.append(result)
             cases.append(case)
+            # if isinstance(result, Dict):
+            #     break
             
         per_case_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_per_case_results.json"
-        serialized = [dataclasses.asdict(result) if not isinstance(result, Exception) else {"instance_id": case['instance_id'], "exception": str(result.__class__)} for case, result in zip(cases, self.results)]
+        serialized = [dataclasses.asdict(result) if isinstance(result, CaseResult) else result for case, result in zip(cases, self.results)]
         per_case_path.write_text(json.dumps(serialized, indent=2, ensure_ascii=False), encoding="utf-8")
         summary = self._summarize(cases)
         summary_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_evaluation_summary.json"
@@ -1553,20 +1563,20 @@ class RefactorEvaluator:
                 "output_dir": str(self.output_dir),
             }
             summary["averages"] = {
-                "caller_accuracy": mean_or_none(result.caller_accuracy for result in results if not isinstance(result, Exception)),
-                "callee_match_score": mean_or_none(result.callee_match_score for result in results if not isinstance(result, Exception)),
-                "callee_precision": mean_or_none(result.callee_precision for result in results if not isinstance(result, Exception)),
-                "callee_recall": mean_or_none(result.callee_recall for result in results if not isinstance(result, Exception)),
-                "callee_f1": mean_or_none(result.callee_f1 for result in results if not isinstance(result, Exception)),
+                "caller_accuracy": mean_or_none(result.caller_accuracy for result in results if isinstance(result, CaseResult)),
+                "callee_match_score": mean_or_none(result.callee_match_score for result in results if isinstance(result, CaseResult)),
+                "callee_precision": mean_or_none(result.callee_precision for result in results if isinstance(result, CaseResult)),
+                "callee_recall": mean_or_none(result.callee_recall for result in results if isinstance(result, CaseResult)),
+                "callee_f1": mean_or_none(result.callee_f1 for result in results if isinstance(result, CaseResult)),
             }
                 
-            test_values = [result.test_passed for result in results if not isinstance(result, Exception) and result.test_passed is not None]
+            test_values = [result.test_passed for result in results if isinstance(result, CaseResult) and result.test_passed is not None]
             if test_values:
                 summary["test_pass_rate"] = sum(1 for value in test_values if value) / len(test_values)
             else:
                 summary["test_pass_rate"] = 0
             if len(results) > 0:
-                summary['exec_success_rate'] = len([r for r in results if not isinstance(r, Exception)]) / len(results)
+                summary['exec_success_rate'] = len([r for r in results if isinstance(r, CaseResult)]) / len(results)
             else:
                 summary['exec_success_rate'] = 0
             return summary
