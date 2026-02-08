@@ -1382,7 +1382,7 @@ class RefactorEvaluator:
         sleep_interval = 200
         acc_step = 0
         while len(self.cases) > 0:
-            case = lines.pop()
+            case = lines.pop(0)
             project_name = case['name']
             if self.args and self.args.project_name is not None:
                 if self.args.project_name != project_name:
