@@ -12,6 +12,7 @@ import shlex
 import subprocess
 import textwrap
 from codebleu import calc_codebleu
+import time 
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from client import LLMFactory, LLMClient, AgentClient, Client, LLMResponse, AgentResponse
@@ -1377,10 +1378,12 @@ class RefactorEvaluator:
         self._log(f"Loaded {total_cases} cases from {self.data_path}")
         
         cases = []
-        
-        for index, case in enumerate(self.cases):
+        lines = self.cases.copy()
+        sleep_interval = 200
+        acc_step = 0
+        while len(self.cases) > 0:
+            case = lines.pop()
             project_name = case['name']
-            
             if self.args and self.args.project_name is not None:
                 if self.args.project_name != project_name:
                     continue
@@ -1389,6 +1392,12 @@ class RefactorEvaluator:
             if self.args.force_request or result is None:
                 if not self.require_lock(project_name):
                     self._log("do not get the lock of " + project_name)
+                    lines.append(case)
+                    acc_step += 1
+                    if acc_step >= sleep_interval:
+                        print(f"waiting for the lock {project_name}")
+                        acc_step = 0
+                        time.sleep(120)
                     continue
                 self._log(f"Processing {instance_id}")
                 try:
