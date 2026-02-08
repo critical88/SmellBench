@@ -1326,7 +1326,7 @@ class RefactorEvaluator:
             self._log("parsing predictions")
             prediction = self._build_prediction_from_repo(case, diff_files, diff_text, response)
             self._log("running testunit")
-            success, output = run_project_tests(project_name, project_repo, case["testsuites"], envs=case['settings']['envs'], test_cmd=case['settings']['test_cmd'])
+            success, output = run_project_tests(project_name, project_repo, case["testsuites"], envs=case['settings']['envs'], test_cmd=case['settings']['test_cmd'], timeout=60)
             self._log(f"testunit {'pass' if success else 'fail'}")
             
         finally:
