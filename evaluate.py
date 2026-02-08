@@ -1417,7 +1417,6 @@ class RefactorEvaluator:
                 continue
             self.results.append(result)
             cases.append(case)
-            break
             
         per_case_path = self.output_dir / f"{self.args.model}_{self.args.llm_model}_per_case_results.json"
         serialized = [dataclasses.asdict(result) if not isinstance(result, Exception) else {"instance_id": case['instance_id'], "exception": str(result.__class__)} for case, result in zip(cases, self.results)]
