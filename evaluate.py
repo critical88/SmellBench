@@ -1286,7 +1286,8 @@ class RefactorEvaluator:
             
             is_cached, cached_info = self._read_cache_code_agent(case, prompt_hash)
             use_cache = False
-            if (not self.args.force_request) and is_cached:
+            # if (not self.args.force_request) and is_cached:
+            if is_cached:
                 self._log("reading cache")
                 output_text, response, diff_files, diff_text = cached_info
                 if response is not None and response.num_turns > 3:
@@ -1399,6 +1400,8 @@ class RefactorEvaluator:
         while len(lines) > 0:
             case = lines.pop(0)
             project_name = case['name']
+            if self.args.instance_id and case['instance_id'] != self.args.instance_id:
+                continue
             if self.args and self.args.project_name is not None:
                 if self.args.project_name != project_name:
                     continue
@@ -1618,6 +1621,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--similarity-threshold", type=float, default=0.7, help="Similarity threshold used for F1 matching.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")
+    parser.add_argument("--instance_id", type=str, default=None)
     return parser.parse_args()
 
 
