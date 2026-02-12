@@ -1617,7 +1617,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-test", default=False, type=bool, help="instruct model whether to use unittest to fix errors")
     parser.add_argument("--api_key", default=None, type=str, help="will overwrite the config in .env, e.g., QWEN_CODE_API_KEY for qwen_code")
     parser.add_argument("--base_url", default=None, type=str, help="will overwrite the config in .env, e.g., QWEN_CODE_BASE_URL for qwen_code")
-    parser.add_argument("--force_request", default=False, default=-1, help="-1 use all cache if exists, 0 all force request, 1 force request when process case, 2 force request when request llm ")
+    parser.add_argument("--force_request", type=int, default=-1, help="-1 use all cache if exists, 0 all force request, 1 force request when process case, 2 force request when request llm ")
     parser.add_argument("--temperature", type=float, default=1, help="Sampling temperature for the chat model.")
     parser.add_argument("--similarity-threshold", type=float, default=0.7, help="Similarity threshold used for F1 matching.")
     parser.add_argument("--verbose", action="store_true", help="Print verbose progress information.")
