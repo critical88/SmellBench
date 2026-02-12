@@ -257,7 +257,7 @@ class QwenCodeClient(CommandAgentClient):
         self.input_in_command = False
 
     def _agent_command(self, model=None):
-        cmd = "qwen -p --model {model} --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
+        cmd = "qwen -p --model {model} -s --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
         model = model or self.model
         cmd = cmd.format(model=model, api_key=self.api_key, base_url=self.base_url)
         return cmd

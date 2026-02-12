@@ -1,0 +1,5 @@
+commit_id = "1d038f270701498433cb432f54db89f95f07a845"
+language = "python"
+build_env = "conda create -n click-dev python==3.10 pytest pytest-cov"
+build_repo = "pip install -e \".[dev]\""
+dependencies = []

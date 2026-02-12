@@ -1,0 +1,5 @@
+commit_id = "8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86"
+language = "python"
+build_env = "conda create -n sphinx-dev -c conda-forge python==3.12 pytest pytest-cov defusedxml"
+build_repo = "pip install -e ."
+dependencies = []

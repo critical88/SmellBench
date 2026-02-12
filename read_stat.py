@@ -15,7 +15,7 @@ def read_cache(project_name, model, llm_model):
     return data
 
 
-def extract_prompt_hashes(model: str, llm_model: str):
+def extract_prompt_hashes(model: str, llm_model: str, dataset:str):
     cache_dir = os.path.join(os.path.dirname(__file__), 'cache')
     file_path = os.path.join(cache_dir, f"{model}_{llm_model}_result.json")
     
@@ -115,9 +115,10 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Extract prompt_hashes and merge stats into fields.')
-    parser.add_argument('--model', type=str, default='openhands', help='Model name, default: openhands')
-    parser.add_argument('--llm_model', type=str, default='DeepSeek-V3.2', help='LLM model name, default: DeepSeek-V3.2')
+    parser.add_argument('--model', type=str, default=None, help='Model name, default: openhands')
+    parser.add_argument('--llm_model', type=str, default=None, help='LLM model name, default: DeepSeek-V3.2')
+    parser.add_argument("--dataset", type=str, default=None)
     args = parser.parse_args()
 
-    extract_prompt_hashes(args.model, args.llm_model)
+    extract_prompt_hashes(args.model, args.llm_model, args.dataset)
     

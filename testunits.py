@@ -120,62 +120,6 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
     finally:
         reset_repository(project_path, commit_hash)
 
-def process_refactoring(project_name):
-    # Define paths
-    base_dir = "../"
-    refactor_json_path = os.path.join( 'output', project_name, 'refactor_codes.json')
-    base_project_path = os.path.join(base_dir, 'project')
-    success_refactor_json_path = os.path.join('output', project_name, 'successful_refactor_codes.json')
-    project_path = os.path.join(base_project_path, project_name)
-
-    # Check if paths exist
-    if not os.path.exists(refactor_json_path):
-        print(f"Refactor JSON not found for {project_name}")
-        return False
-    if not os.path.exists(project_path):
-        print(f"Project directory not found for {project_name}")
-        return False
-
-    # Read refactoring JSON
-    try:
-        with open(refactor_json_path, 'r', encoding='utf-8') as f:
-            json_data = json.load(f)
-            settings = json_data.get("settings", {})
-            refactor_data = json_data.get("refactor_codes", [])
-    except Exception as e:
-        print(f"Error reading refactor JSON for {project_name}: {e}")
-        return False
-
-    src_path = settings.get("src_path", "")
-    test_cmd = settings.get("test_cmd", "")
-    envs = settings.get("envs", {})
-    # Process each refactoring
-    successed_refactor_data = []
-    spec = get_spec(project_name)
-    if not prepare_to_run(spec):
-        print("failed to prepare repo env")
-        return False
-    for refactor_item in tqdm(refactor_data, desc="testing cases..."):
-        success = replace_and_test_caller(
-            project_name=project_name, 
-            src_path=src_path, 
-            testsuites=refactor_item['testsuites'], 
-            caller_file_content=refactor_item['caller_file_content'],
-            envs=envs,
-            test_cmd=test_cmd
-        )
-        
-        if success:
-            successed_refactor_data.append(refactor_item)
-    print("Number of successful refactorings:", len(successed_refactor_data))
-    with open(success_refactor_json_path, 'w', encoding='utf-8') as f:
-        json.dump({
-            "name": project_name,
-            "settings": settings,
-            "refactor_codes": successed_refactor_data
-        }, f, indent=4)
-    reset_repository(project_path)
-    return successed_refactor_data
 
 
 def main(args):
