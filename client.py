@@ -260,6 +260,75 @@ class QwenCodeClient(CommandAgentClient):
         cmd = "qwen -p --model {model} --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
         model = model or self.model
         cmd = cmd.format(model=model, api_key=self.api_key, base_url=self.base_url)
+        envs = {
+            "QWEN_CODE_TOOL_CALL_STYLE": "qwen-vl"
+        }
+        return cmd, envs
+    
+    def _tackle_output_to_response(self, model, output_text)->AgentResponse:
+        content = ""
+        response = None
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        cache_tokens = 0
+        tool_calls = 0
+        tool_call_success = 0
+        duration = 0
+        api_duration= 0 
+        num_turns = 0
+        if output_text:
+            response = output_text
+            output_stream_text_list = output_text.split("\n")
+            for o in output_stream_text_list:
+                if not o:
+                    continue
+                o = json.loads(o)
+                if 'message' in o and o['message']['content']:
+                    tool_content = o['message']['content'][0]
+                    if tool_content['type'] == 'tool_result':
+                        tool_calls +=1
+                        if not tool_content['is_error']:
+                            tool_call_success += 1 
+                elif o['type'] == 'result':
+                    content = o['result']
+                    prompt_tokens = o['usage']['input_tokens']
+                    completion_tokens = o['usage']['output_tokens']
+                    total_tokens = o['usage'].get('total_tokens', 0)
+                    cache_tokens = o['usage'].get('cache_read_input_tokens', 0)
+                    duration = o['duration_ms'] / 1000
+                    num_turns = o['num_turns']
+                    api_duration = o['duration_api_ms'] / 1000
+        
+        return AgentResponse(
+                content=content,
+                model=model,
+                raw_response=response,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                total_tokens=total_tokens,
+                cache_tokens=cache_tokens,
+                duration=duration,
+                num_turns=num_turns,
+                tool_calls=tool_calls,
+                tool_call_success=tool_call_success,
+                api_duration=api_duration
+            )
+    
+
+
+class ClaudeCodeClient(CommandAgentClient):
+    def __init__(self, model=None, api_key=None, base_url=None):
+        super().__init__()
+        self.model = model or os.getenv("CLAUDE_CODE_MODEL")
+        self.api_key = api_key or os.getenv("CLAUDE_CODE_API_KEY")
+        self.base_url = base_url or os.getenv("CLAUDE_CODE_BASE_URL")
+        self.input_in_command = False
+
+    def _agent_command(self, model=None):
+        cmd = "claude -p --model {model} --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
+        model = model or self.model
+        cmd = cmd.format(model=model, api_key=self.api_key, base_url=self.base_url)
         return cmd
     
     def _tackle_output_to_response(self, model, output_text)->AgentResponse:
