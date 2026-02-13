@@ -1,5 +1,0 @@
-commit_id = "1392cbe3c79cdb93f9282747841d648770f60249"
-language = "python"
-build_env = "conda env create --file environment.yml"
-build_repo = [ "python -m pip install --verbose --no-build-isolation --editable \".[dev]\"",]
-dependencies = []

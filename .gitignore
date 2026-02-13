@@ -10,3 +10,4 @@ run/refactor_eval
 *.xml
 *.jsonl
 .repo_lock
+SmellBench/*
