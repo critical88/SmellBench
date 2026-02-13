@@ -121,7 +121,7 @@ for repo_name, rules in sample_rules.items():
 # After sampling: generate structured dataset (SWE-bench style)
 # ==============================================================
 import toml
-ROOT = "/Users/linfake/Documents/codebench/SWE-Refactor/tmp_code_benchmark"
+ROOT = "./"
 REPO_LIST_PATH = os.path.join(ROOT, "repo_list.json")
 DATASET_DIR = os.path.join(ROOT, "SmellBench")
 os.makedirs(DATASET_DIR, exist_ok=True)
