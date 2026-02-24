@@ -12,7 +12,6 @@ import argparse
 from tqdm import tqdm
 from utils import get_spec, prepare_to_run
 from testunits import replace_and_test_caller, reset_repository
-from testunit_coverage import generate_function_mapping
 
 def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
     """

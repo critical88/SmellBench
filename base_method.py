@@ -2,7 +2,6 @@ import ast
 import json
 import os
 import re
-from client import LLMFactory
 from dotenv import load_dotenv
 from typing import Dict, List, Tuple, Set
 import textwrap
@@ -381,7 +380,8 @@ class BaseCollector():
         return "\n".join(ast.unparse(stmt) for stmt in new_module.body)
 
     def _init_llm_client(self):
-        self.client = LLMFactory.create_client()
+        # self.client = LLMFactory.create_client()
+        self.client = None
 
     def _find_related_testsuite(self, current_methods)->Set:
         if not current_methods:

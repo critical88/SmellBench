@@ -11,3 +11,4 @@ run/refactor_eval
 *.jsonl
 .repo_lock
 SmellBench/*
+docker_images/*

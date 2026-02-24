@@ -20,14 +20,6 @@
         "env_name": "numpy-dev",
         "test_cmd": "--ignore=numpy/distutils --ignore=vendored-meson"
     },
-    "requests": {
-        "url": "https://github.com/psf/requests.git",
-        "commit_id": "b25c87d7cb8d6a18a37fa12442b5f883f9e41741"
-    },
-    "urllib3": {
-        "url": "https://github.com/urllib3/urllib3.git",
-        "commit_id": "83f8643ffb5b7f197457379148e2fa118ab0fcdc"
-    },
     "jinja": {
         "name": "jinja",
         "url": "https://github.com/pallets/jinja.git",
@@ -37,12 +29,6 @@
         "conda_env_create": "conda create -n jinja-dev python==3.10 pytest pytest-cov trio",
         "build_cmd": "pip install -e .",
         "env_name": "jinja-dev"
-    },
-    "fastapi":{
-        "url": "https://github.com/fastapi/fastapi.git",
-        "commit_id": "b1d9769f97295a238df8c2d318ad65dd6a40c6ff",
-        "src_path": "fastapi",
-        "test_cmd": "--ignore=tests/test_tutorial"
     },
     "pandas":{
         "url":"https://github.com/pandas-dev/pandas",
@@ -88,14 +74,6 @@
         "conda_env_create": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
         "build_cmd": "pip install --editable . --verbose --no-build-isolation --config-settings editable-verbose=true",
         "env_name": "sklearn-dev"
-    },
-    "flask":{
-        "url": "https://github.com/pallets/flask",
-        "commit_id": "2c1b30d0503cfb064f1cb252e6614a06915a362a",
-        "src_path": "src/flask",
-        "build_cmd": "pip install --editable .[async]",
-        "conda_env_create": "conda create -n flask-dev -c conda-forge python==3.12 pytest pytest-cov ",
-        "env_name": "flask-dev"
     },
     "matplotlib":{
         "url": "https://github.com/matplotlib/matplotlib",
