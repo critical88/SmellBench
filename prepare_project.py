@@ -15,8 +15,9 @@ DEFAULT_PROJECT_DIR = Path("../project")
 client = docker.from_env()
 
 def build_base_image() -> None:
+    print(f"Building base image")
     image, logs = client.images.build(path=".", dockerfile="Dockerfile", tag="smellbench_base:latest")
-    print(f"Built base image: {image.tags[0]}")
+    print(f"Successfully built base image: {image.tags[0]}")
 def build_repo_images() -> None:
     base_image_dir = Path("docker_images")
     print(f"Creating Dockerfile for projects")
@@ -31,7 +32,11 @@ def build_repo_images() -> None:
         
         image_dir = base_image_dir / project_name
         os.makedirs(image_dir, exist_ok=True)
-
+        if isinstance(conda_env_create, list):
+            conda_env_create = " && ".join(conda_env_create)
+        if isinstance(build_cmd, list):
+            build_cmd = [ f"conda run -n {env_name} {cmd}" for cmd in build_cmd ]
+            build_cmd = " && ".join(build_cmd)
         # Dockerfile
         os.makedirs(image_dir, exist_ok=True)
         dockerfile = f"""\
@@ -47,7 +52,7 @@ RUN git clone --recursive "$REPO_URL" {project_name} \
 
 WORKDIR /workspace/project/{project_name}
 RUN {conda_env_create}
-RUN conda run -n {env_name} {build_cmd}
+RUN {build_cmd}
 
 CMD [\"/bin/bash\"]
 """
@@ -56,12 +61,12 @@ CMD [\"/bin/bash\"]
     
     print(f"Building images for projects")
     for project_name, item in repo_list.items():
-        
+        print("Building image for project:", project_name)
         image_dir = base_image_dir / project_name
 
         image, logs = client.images.build(path=str(image_dir), tag=f"smellbench_{project_name}:latest")
 
-        print(f"Built project image: {image.tags[0]}")
+        print(f"Successfully built project image: {image.tags[0]}")
 
 def main() -> None:
     
