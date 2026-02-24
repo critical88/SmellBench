@@ -5,7 +5,7 @@ This repository provides the **official PyTorch implementation** of **SmellBench
 
 ---
 
-## 📦 Environment Setup
+## Environment Setup
 
 We recommend using **Python 3.12**.
 
@@ -17,13 +17,13 @@ pip install -r repo_requirements.txt
 
 ---
 
-# 🔬 Benchmark Pipeline
+#  Benchmark Pipeline
 
 The benchmark construction consists of the following steps:
 
 ---
 
-## 1️⃣ Repository Selection
+## Repository Selection
 
 We provide metadata for selected repositories in `repo_list.json`.
 
@@ -55,7 +55,7 @@ If you would like to add additional repositories, please extend the configuratio
 
 ---
 
-## 2️⃣ AST-based Analysis
+## AST-based Analysis
 
 Before generating data, we perform dependency and AST analysis on the repository.
 
@@ -82,7 +82,7 @@ Future updates will migrate this process into a Docker-based environment.
 
 ---
 
-## 3️⃣ Smell Injection
+## Smell Injection
 
 In this stage, we inject predefined code smells into the selected repositories.
 
@@ -103,7 +103,7 @@ Only data pairs that pass unit tests are retained in the candidate pool.
 
 ---
 
-## 4️⃣ Data Sampling
+## Data Sampling
 
 Since the collected dataset can be large, we apply a sampling strategy to construct the final benchmark.
 
@@ -121,7 +121,7 @@ outputs/benchmark.json
 
 ---
 
-# 🚀 Evaluation
+# Evaluation
 
 After obtaining the benchmark, we provide an evaluation pipeline for testing code agents.
 
@@ -139,7 +139,7 @@ This will generate the evaluation results for the specified code agent.
 
 ---
 
-# 📌 Notes
+# Notes
 
 * Each repository requires independent preprocessing.
 * Make sure all repository environments are correctly created before running injection.
