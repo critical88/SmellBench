@@ -12,3 +12,4 @@ run/refactor_eval
 .repo_lock
 SmellBench/*
 docker_images/*
+logs/*

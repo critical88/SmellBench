@@ -991,7 +991,7 @@ def generate_function_mapping(project_name:str, project_path="../project") -> in
         print(f"environment different, redirected to {target_conda_env}")
         # subprocess.run(["pytest", "-q"])
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
-        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "testunit_coverage.py", "--project-name", project_name], text=True)
+        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "ast_analyze.py", "--project-name", project_name], text=True)
         return 
     
     
@@ -1003,6 +1003,10 @@ def generate_function_mapping(project_name:str, project_path="../project") -> in
     output_dir = Path("output") / project_name
     os.makedirs(output_dir, exist_ok=True)
     output_json = output_dir / "function_testunit_mapping.json"
+
+    if output_json.exists():
+        print(f"Output file {output_json} already exists.")
+        return
 
     sys.path.insert(0, str(src_root.parent))
     sys.path.insert(0, str(project_root))

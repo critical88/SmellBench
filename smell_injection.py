@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import random
+from pathlib import Path
 
 from typing import Any, Dict, List, Tuple
 from analyzer import MethodAnalyzer
@@ -63,6 +64,12 @@ def process_refactoring(project_name):
     success_refactor_json_path = os.path.join('output', project_name, 'successful_refactor_codes.json')
     project_path = os.path.join(base_project_path, project_name)
 
+    if os.path.exists(success_refactor_json_path):
+        print(f"Successful refactor JSON already exists at {success_refactor_json_path}, skipping testing.")
+        with open(success_refactor_json_path, 'r', encoding='utf-8') as f:
+            successed_refactor_data = json.load(f).get("refactor_codes", [])
+        return successed_refactor_data
+
     # Check if paths exist
     if not os.path.exists(refactor_json_path):
         print(f"Refactor JSON not found for {project_name}")
@@ -112,21 +119,21 @@ def process_refactoring(project_name):
     reset_repository(project_path)
     return successed_refactor_data
 
-def main(args):
-    random.seed(args.seed)
+def analyze_codebase(args):
     project_name = args.project_name
-    
     project_path = args.project_dir
     output_path = args.output_dir
-    project_lib = f"{project_path}/{project_name}"
-
-    print(f"Python version: {sys.version}")
-    print(f"Current working directory: {os.getcwd()}")
-   
-
-    # print(f"Traversing All testunit")
-    # generate_function_mapping(project_name, project_path)
+    project_lib = Path(project_path) / project_name
     print(f"\nAnalyzing codebase: {project_lib}")
+    output_base = os.path.join(output_path, project_name)
+    os.makedirs(output_base, exist_ok=True)
+    refactor_code_path = os.path.join(output_base, 'refactor_codes.json')
+
+    if os.path.exists(refactor_code_path):
+        with open(refactor_code_path, 'r', encoding='utf-8') as f:
+            result = json.load(f)
+        print(f"Refactor code JSON already exists at {refactor_code_path}, skipping analysis.")
+        return result
     analyzer = MethodAnalyzer(project_name, project_path, long_method_depth=args.long_method_depth)
     
     result = analyzer.find_refactor_codes()
@@ -136,19 +143,37 @@ def main(args):
         return
     refactor_codes = result['refactor_codes']
     
-    output_base = os.path.join(output_path, project_name)
-    os.makedirs(output_base, exist_ok=True)
-    with open(os.path.join(output_base, 'refactor_codes.json'), 'w', encoding='utf-8') as f:
+    with open(refactor_code_path, 'w', encoding='utf-8') as f:
         settings = analyzer.meta_info
         saved_json = {
             "name": project_name,
             "settings": settings,
-            "refactor_codes": refactor_codes
+            "refactor_codes": refactor_codes,
+            "stat": result['stat']
         }
         json.dump(saved_json, f, indent=2)
     caller_files_dir = os.path.join(output_base, 'caller_files')
     saved_files = save_caller_file_contents(refactor_codes, caller_files_dir)
     print(f"Saved {len(saved_files)} caller file copies to {caller_files_dir}")
+
+    return result
+
+def main(args):
+    random.seed(args.seed)
+    project_name = args.project_name
+
+    print(f"Python version: {sys.version}")
+    print(f"Current working directory: {os.getcwd()}")
+
+    result = analyze_codebase(args)
+
+    if result is None:
+        return
+   
+
+    # print(f"Traversing All testunit")
+    # generate_function_mapping(project_name, project_path)
+    
 
     print("Start testunit to filter the illegal code")
     passed_refactors = process_refactoring(project_name)
