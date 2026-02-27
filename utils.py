@@ -1,6 +1,7 @@
 import contextlib
 from pathlib import Path
 import os
+import shlex
 import textwrap
 import ast
 import shutil
@@ -10,6 +11,8 @@ import hashlib
 import subprocess
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import json
+from prompts import *
+
 INFO_LOG_LEVEL=logging.INFO
 DEBUG_LOG_LEVEL=logging.DEBUG
 
@@ -76,10 +79,34 @@ def list_conda_envs():
         env = env.split(" ")
         env_list[env[0]] = env[-1]
     return env_list
-    
+
+
+
+def _module_relative_path(module_path: str, src_path:str) -> Path:
+    cleaned = (module_path or "").strip(".")
+    src_tail = Path(src_path).parts[-1] if Path(src_path).parts else src_path
+    if cleaned.startswith(f"{src_tail}."):
+        cleaned = cleaned[len(src_tail) + 1 :]
+    if not cleaned:
+        rel = Path("__init__.py")
+    else:
+        rel = Path(cleaned.replace(".", os.sep) + ".py")
+    return Path(src_path) / rel
 
 def is_spec_installed(spec):
     return len(list_uninstalled_specs(spec)) == 0
+
+def replace_file_content(file_path, new_content):
+    """Replace the content of a file with new content"""
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        return True
+    except Exception as e:
+        print(f"Error replacing file {file_path}: {e}")
+        return False
+    
 
 def list_uninstalled_specs(specs):
     if not isinstance(specs, list):
@@ -90,6 +117,7 @@ def list_uninstalled_specs(specs):
         if "env_name" in spec and spec['env_name'] not in env_dict:
             uninstalled.append(spec)
     return uninstalled
+
 
 def prepare_env(spec, project_path="../project"):
     repo_name = spec['name']
@@ -155,6 +183,18 @@ def _run_git_command(args: Sequence[str], check: bool = True, cwd=None) -> subpr
             f"Git command {' '.join(args)} failed with code {result.returncode}: {result.stderr.strip()}"
         )
     return result
+
+def create_test_command(test_file_paths=[], test_cmd="", envs=None):
+    cmd = []
+    if test_cmd:
+        cmd.extend(shlex.split(test_cmd, posix=True))
+    
+    cmd.extend(test_file_paths)
+    if envs is not None:
+        cmd = [f"{k}={v}" for k, v in envs.items()] + ["pytest", "-x"] + cmd
+    else:
+        cmd = ["pytest", "-x"] + cmd
+    return cmd
 
 def install_repo(spec, project_path="../project"):
     repo_name = spec['name']

@@ -11,8 +11,8 @@ class LongMethodCollector(BaseCollector):
     MINIMAL_CALLEE_NUM = 1
     TOTAL_CALLEE_LENGTH_THRESHOLD = 20
 
-    def __init__(self, project_path: str, project_name: str, src_path: str, all_definitions, family_classes, max_inline_depth:int=1) -> None:
-        super().__init__(project_path, project_name, src_path, all_definitions, family_classes)
+    def __init__(self, project_path: str, project_name: str, src_path: str, commitid:str, all_definitions, family_classes, max_inline_depth:int=1) -> None:
+        super().__init__(project_path, project_name, src_path, commitid, all_definitions, family_classes)
         self._expanded_method_cache = {}
         self.max_inline_depth = max(1, max_inline_depth)
 
@@ -187,13 +187,15 @@ class LongMethodCollector(BaseCollector):
         total_caller_lines = len(before_refactor_code[0]['code'].splitlines())
         # 如果被调用方法的总行数超过阈值
         if total_callee_lines > self.TOTAL_CALLEE_LENGTH_THRESHOLD:
+            caller_file_content = [{"code": "\n".join(caller_lines), "module_path": caller_module, "file_suffix": caller_method[2]}]
+            smell_content = self.create_diff_file(caller_file_content)
             long_method = {
                 "type": self.name(),
                 "meta":{"key": f"depth_{max_depth}", "depth": max_depth, "calling_times": len(replacements), "total_caller_lines": total_caller_lines, "total_callee_lines": total_callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
-                "caller_file_content": [{"code": "\n".join(caller_lines), "module_path": caller_module, "file_suffix": caller_method[2]}],
+                "smell_content": smell_content,
                 "hash": hashcode("\n".join(caller_lines))
             }
             return long_method

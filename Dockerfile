@@ -1,10 +1,12 @@
-FROM docker.m.daocloud.io/continuumio/miniconda3:latest
+FROM continuumio/miniconda3:latest
 WORKDIR /workspace/
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git build-essential && rm -rf /var/lib/apt/lists/*
 
 RUN conda create -n testbed python==3.12
 COPY ./requirements.txt /workspace
-RUN conda run -n testbed pip install -r requirements.txt
+COPY ./eval_requirements.txt /workspace
+
+RUN conda run -n testbed pip install -r eval_requirements.txt
 
 RUN echo "source activate testbed" >> ~/.bashrc
 ENV PATH /opt/conda/envs/testbed/bin:$PATH

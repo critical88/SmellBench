@@ -13,3 +13,5 @@ run/refactor_eval
 SmellBench/*
 docker_images/*
 logs/*
+jobs/*
+harbor

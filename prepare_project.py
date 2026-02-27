@@ -106,6 +106,8 @@ def build_repo_images() -> None:
 
 def run_next_step():
     print(">>> Executing next pipeline step...")
+    from sample_data import sample_data
+    sample_data()
 def run_construct(project_name, project_tag):
     log_file_path = os.path.join(LOG_DIR, f"{project_name}.log")
     client = docker.from_env()
@@ -138,7 +140,7 @@ def run_construct(project_name, project_tag):
         result = container.wait()
         exit_code = result["StatusCode"]
 
-        container.remove()
+        # container.remove()
 
         if exit_code == 0:
             return project_name, True
@@ -153,12 +155,13 @@ def run_construct(project_name, project_tag):
         return project_name, False
     finally:
         container.remove(force=True)
-        print("Container removed.")
+        print(f"Container {project_name} removed.")
 def main() -> None:
     
     build_base_image()
 
     build_repo_images()
+
 
 
 if __name__ == "__main__":

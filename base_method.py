@@ -5,11 +5,9 @@ import re
 from dotenv import load_dotenv
 from typing import Dict, List, Tuple, Set
 import textwrap
-from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL
-
-
+from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL, replace_file_content, _run_git_command
 class BaseCollector():
-    def __init__(self, project_path:str, project_name:str, src_path:str, all_definitions:Dict[Tuple, Dict], family_classes) -> None:
+    def __init__(self, project_path:str, project_name:str, src_path:str, commitid: str, all_definitions:Dict[Tuple, Dict], family_classes) -> None:
         """
         Docstring for __init__
         
@@ -25,6 +23,7 @@ class BaseCollector():
             {(called_module, called_class, called_method_name): definition}
         
         """
+        self.commitid = commitid
         self.project_path = project_path
         self.project_name = project_name
         self.module_name = os.path.normpath(src_path).split(os.sep)[-1]
@@ -1247,6 +1246,24 @@ Callee:
             'replacement': indented_body.splitlines(),
             'imports': imports
         }
+    
+    
+    def create_diff_file(self, caller_file_content):
+        repo_path = os.path.join(self.project_path, self.project_name)
+
+        try:
+            for code_item in caller_file_content:
+                module = code_item.get('module_path', '').lstrip(self.module_name).lstrip(".")
+                file_path = os.path.join(repo_path, self.src_path, module.replace(".", os.sep) + ".py")
+                success = replace_file_content(file_path, code_item.get('code', ''))
+                if not success:
+                    print(f"Failed to replace file {file_path}")
+            
+            process_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            
+            return process_ret.stdout
+        finally:
+            _run_git_command(["reset", "--hard", self.commitid], cwd=repo_path)
         
     def collect(self, all_calls, all_class_parents, family_classes):
         """

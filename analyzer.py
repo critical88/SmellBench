@@ -639,6 +639,8 @@ class MethodAnalyzer():
 
         family_classes = self._collect_family_classes(all_class_parents)
 
+        with pushd(os.path.join(self.project_path, self.project_name)):
+            commit_hash = subprocess.run(['git', "rev-parse", "HEAD"], text=True, cwd=".", capture_output=True, check=True).stdout.strip()
         
         collectors: List[BaseCollector] = [
             LongMethodCollector(project_path=self.project_path, 
@@ -646,10 +648,12 @@ class MethodAnalyzer():
                                 src_path=self.src_path, 
                                 all_definitions=all_definitions, 
                                 family_classes=family_classes, 
+                                commitid=commit_hash,
                                 max_inline_depth=self.long_method_depth),
             DuplicatedMethodCollector(project_path=self.project_path, 
                                     project_name=self.project_name, 
                                     src_path=self.src_path, 
+                                    commitid=commit_hash,
                                     all_definitions=all_definitions, 
                                     family_classes=family_classes),
             # OverloadedMethodCollector(self.project_path, self.project_name, self.src_path)
@@ -657,9 +661,7 @@ class MethodAnalyzer():
         result = {}
         refactored_count = 0
         refactor_codes = []
-        with pushd(os.path.join(self.project_path, self.project_name)):
-            commit_hash = subprocess.run(['git', "rev-parse", "HEAD"], text=True, cwd=".", capture_output=True, check=True).stdout.strip()
-
+        
         stat = {}
         for collector in collectors:
             ret = collector.collect(all_calls=all_calls, 

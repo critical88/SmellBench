@@ -3,9 +3,9 @@ import os
 import subprocess
 from pathlib import Path
 import argparse
-from utils import pushd, _log, DEBUG_LOG_LEVEL, prepare_to_run, conda_exec_cmd, get_spec
+from utils import pushd, _log, create_test_command, DEBUG_LOG_LEVEL, _run_git_command, conda_exec_cmd, get_spec
 from tqdm import tqdm
-import shlex
+import uuid
 
 def reset_repository(repo_path, commit_hash=None):
     """Reset the git repository to its latest state"""
@@ -18,28 +18,7 @@ def reset_repository(repo_path, commit_hash=None):
         print(f"Error resetting repository at {repo_path}")
         return False
 
-def replace_file_content(file_path, new_content):
-    """Replace the content of a file with new content"""
-    try:
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        return True
-    except Exception as e:
-        print(f"Error replacing file {file_path}: {e}")
-        return False
 
-def create_test_command( test_file_paths=[], test_cmd="", envs=None):
-    cmd = []
-    if test_cmd:
-        cmd.extend(shlex.split(test_cmd, posix=True))
-    
-    cmd.extend(test_file_paths)
-    if envs is not None:
-        cmd = [f"{k}={v}" for k, v in envs.items()] + ["pytest", "-x"] + cmd
-    else:
-        cmd = ["pytest", "-x"] + cmd
-    return cmd
 
 def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
     spec = get_spec(project_name)
@@ -82,7 +61,7 @@ def run_project_tests(project_name, project_path, test_file_paths, envs={}, test
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_file_content=None, test_cmd="", envs={}, project_dir="../project", commit_hash=None, verbose=False):
+def replace_and_test_caller(project_name:str, src_path:str, testsuites, smell_content=None, test_cmd="", envs={}, project_dir="../project", commit_hash=None, verbose=False):
     # Define paths
     base_project_path = project_dir
     module_path = os.path.normpath(src_path).split(os.sep)[-1]
@@ -98,14 +77,17 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
         return False
     try:
         test_file_paths = testsuites
-        if caller_file_content is not None:
-            for code_item in caller_file_content:
-                module = code_item.get('module_path', '').lstrip(module_path).lstrip(".")
-                file_path = os.path.join(base_project_path, project_name, src_path, module.replace(".", os.sep) + ".py")
-                success = replace_file_content(file_path, code_item.get('code', ''))
-                if not success:
-                    print(f"Failed to replace file {file_path}")
-                    return False
+        if smell_content is not None:
+            uuid_str = str(uuid.uuid4())
+            try:
+                diff_file = os.path.join(project_path, f"{project_name}_smell_{uuid_str}.diff")
+                with open(diff_file, "w") as f:
+                    f.write(smell_content)
+                diff_file_path = os.path.abspath(diff_file)
+                _run_git_command(["apply", diff_file_path], cwd=project_path)
+            finally:
+                if os.path.exists(diff_file):
+                    os.remove(diff_file)
         # Run tests
         success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd, timeout=20)
     
@@ -122,27 +104,27 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, caller_f
 
 
 
-def main(args):
-    project_name = args.project_name
-    # List of projects to process
-    projects = [project_name]  # Add more projects as needed
+# def main(args):
+#     project_name = args.project_name
+#     # List of projects to process
+#     projects = [project_name]  # Add more projects as needed
     
-    results = {}
-    for project in projects:
-        print(f"\nProcessing {project}...")
-        results[project] = process_refactoring(project)
+#     results = {}
+#     for project in projects:
+#         print(f"\nProcessing {project}...")
+#         results[project] = process_refactoring(project)
     
-    # Print summary
-    print("\nSummary:")
-    for project, success in results.items():
-        status = "Finished" if success else "Failed"
-        print(f"{project}: {status}")
+#     # Print summary
+#     print("\nSummary:")
+#     for project, success in results.items():
+#         status = "Finished" if success else "Failed"
+#         print(f"{project}: {status}")
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
-    parser.add_argument("--project-name", default="click", help="Project name")
-    return parser.parse_args()
+# def parse_args() -> argparse.Namespace:
+#     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
+#     parser.add_argument("--project-name", default="click", help="Project name")
+#     return parser.parse_args()
 
-if __name__ == '__main__':
-    args = parse_args()
-    main(args)
+# if __name__ == '__main__':
+#     args = parse_args()
+#     main(args)

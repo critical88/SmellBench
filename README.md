@@ -3,9 +3,227 @@
 
 This repository provides the **official PyTorch implementation** of **SmellBench**, a benchmark designed to evaluate whether code agents can detect and refactor bad code (code smells).
 
+## Dataset Format
+
+Each instance in **SmellBench** represents a validated code smell injection case constructed from a real-world open-source repository.
+
+Each sample contains:
+
+* Repository metadata
+* Injected code smell information
+* Related test cases
+* Code before refactoring (with smell)
+* Ground-truth refactored code (structured as a call tree)
+
+Below is a complete example of a single data instance.
+
 ---
 
-## Environment Setup
+### Full JSON Structure (Single Sample)
+
+```json
+{
+  "instance_id": "8a580458bac9d4bd6fc0ee8094786c36",
+  "type": "Long",
+  "smell_content": "diff --git a/src/xxx.py b/src/xxx.py ...",
+
+  "project_name": "click",
+  "commit_hash": "1d038f270701498433cb432f54db89f95f07a845",
+
+  "meta": {
+    "key": "depth_1",
+    "depth": 1,
+    "calling_times": 3
+  },
+
+  "testsuites": [
+    "test_utils.py::test_make_default"
+  ],
+
+  "before_refactor_code": {
+    "type": "caller",
+    "start": 1096,
+    "end": 1151,
+    "code": "def get_short_help_str(...): ...",
+    "module_path": "click.core",
+    "class_name": "Command",
+    "method_name": "get_short_help_str"
+  },
+
+  "after_refactor_code": [
+    {
+      "type": "caller",
+      "code": "def get_short(...): ...",
+      "position": {
+        "module_path": "click.core",
+        "class_name": "Command"
+      },
+
+      "callees": [
+        {
+          "type": "callee",
+          "start": 1103,
+          "end": 1104,
+          "code": "def make_default(...): ...",
+
+          "position": {
+            "module_path": "click.core",
+            "class_name": "Command"
+          },
+
+          "callees": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+### Field Description
+
+#### Top-level Fields
+
+* **`instance_id`**
+  Unique identifier for the sample.
+
+* **`type`**
+  Code smell category. Currently supported:
+
+  * `"Long"` (Long Method)
+  * `"Duplicated"` (Duplicated Code)
+
+* **`smell_content`**
+  The injected patch (Git diff format) introducing the code smell.
+
+* **`project_name`**
+  Name of the source repository.
+
+* **`commit_hash`**
+  Specific commit used to ensure reproducibility.
+
+---
+
+#### `meta` Field
+
+Metadata related to cascade injection:
+
+* **`key`**
+  Injection category: `depth_1`, `depth_2`, `depth_3`, or `duplicated`.
+
+* **`depth`**
+  Depth of the call chain in cascade injection.
+
+* **`calling_times`**
+  Number of callees invoked by the caller.
+
+---
+
+#### `testsuites`
+
+A list of related unit tests.
+
+All injected samples are validated to pass these tests to ensure behavioral equivalence after refactoring.
+
+---
+
+### Code Representation
+
+#### `before_refactor_code`
+
+Represents the **smell-injected function** (the target to be refactored).
+
+It is a single flat function definition containing:
+
+* Source code
+* Line range in the original file
+* Module path
+* Class name
+* Method name
+
+---
+
+#### `after_refactor_code` (Ground Truth)
+
+Represents the **ideal refactored structure**.
+
+Unlike the flat representation before refactoring, this is modeled as a **call tree**.
+
+### Tree Structure
+
+```
+caller
+ └── callee
+      └── subcallee
+           └── ...
+```
+
+Each node (caller or callee) contains:
+
+* `type` (caller / callee)
+* `code` (source code)
+* `position` (module path + class name)
+* `callees` (nested child functions)
+
+This recursive structure enables representing:
+
+* Single-level extraction (`depth_1`)
+* Multi-level cascade extraction (`depth_2`, `depth_3`)
+* Duplicated code extraction
+
+---
+
+### Before vs After Refactoring
+
+| Before Refactoring      | After Refactoring                     |
+| ----------------------- | ------------------------------------- |
+| Long function or Duplicated Code    | Decomposed into multiple functions    |
+| Flat representation     | Hierarchical call-tree representation |
+| Contains injected smell | Clean, structured implementation      |
+
+---
+
+
+
+
+#  Benchmark Pipeline
+
+## One-Click Reproducibility
+To ensure full reproducibility and minimize environment-related inconsistencies, we provide a one-click script:
+```bash
+python -u prepare_project.py
+```
+
+This script automatically executes the entire pipeline for all predefined repositories, including:
+
+- Repository cloning
+
+- Environment setup
+
+- AST-based analysis
+
+- Smell injection
+
+- Data validation
+
+- Benchmark sampling
+
+All steps are executed inside a Docker container, which guarantees:
+
+✅ Reproducibility across different machines
+
+✅ Isolation from local dependency conflicts
+
+✅ Ease of use (no manual environment configuration required)
+
+✅ Portability and deployment consistency
+
+Users only need Docker installed to reproduce the complete benchmark construction process.
+
+Below we provide a detailed explanation of each stage in the pipeline.
+
+## Environment Setup    
 
 We recommend using **Python 3.12**.
 
@@ -14,14 +232,6 @@ Install the required dependencies with:
 ```bash
 pip install -r repo_requirements.txt
 ```
-
----
-
-#  Benchmark Pipeline
-
-The benchmark construction consists of the following steps:
-
----
 
 ## Repository Selection
 

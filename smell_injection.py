@@ -56,7 +56,7 @@ def save_caller_file_contents(result: Any, output_dir: str) -> List[str]:
 
     return saved_files
 
-def process_refactoring(project_name):
+def process_refactoring(args, project_name):
     # Define paths
     base_dir = "../"
     refactor_json_path = os.path.join( 'output', project_name, 'refactor_codes.json')
@@ -64,7 +64,7 @@ def process_refactoring(project_name):
     success_refactor_json_path = os.path.join('output', project_name, 'successful_refactor_codes.json')
     project_path = os.path.join(base_project_path, project_name)
 
-    if os.path.exists(success_refactor_json_path):
+    if not args.force and os.path.exists(success_refactor_json_path):
         print(f"Successful refactor JSON already exists at {success_refactor_json_path}, skipping testing.")
         with open(success_refactor_json_path, 'r', encoding='utf-8') as f:
             successed_refactor_data = json.load(f).get("refactor_codes", [])
@@ -102,7 +102,7 @@ def process_refactoring(project_name):
             project_name=project_name, 
             src_path=src_path, 
             testsuites=refactor_item['testsuites'], 
-            caller_file_content=refactor_item['caller_file_content'],
+            smell_content=refactor_item['smell_content'],
             envs=envs,
             test_cmd=test_cmd
         )
@@ -129,11 +129,12 @@ def analyze_codebase(args):
     os.makedirs(output_base, exist_ok=True)
     refactor_code_path = os.path.join(output_base, 'refactor_codes.json')
 
-    if os.path.exists(refactor_code_path):
+    if not args.force and os.path.exists(refactor_code_path):
         with open(refactor_code_path, 'r', encoding='utf-8') as f:
             result = json.load(f)
         print(f"Refactor code JSON already exists at {refactor_code_path}, skipping analysis.")
         return result
+    
     analyzer = MethodAnalyzer(project_name, project_path, long_method_depth=args.long_method_depth)
     
     result = analyzer.find_refactor_codes()
@@ -170,13 +171,11 @@ def main(args):
     if result is None:
         return
    
-
     # print(f"Traversing All testunit")
     # generate_function_mapping(project_name, project_path)
-    
 
     print("Start testunit to filter the illegal code")
-    passed_refactors = process_refactoring(project_name)
+    passed_refactors = process_refactoring(args, project_name)
     print(f"Number of refactor_codes: {result['stat']['raw_refacoter_num']}")
     print(f"Number of refactors with testunits: {result['stat']['refactor_with_test_num']}")
     print("Number of refactor_codes splits: " + str(result['stat']['split']))
@@ -199,6 +198,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default="click", help="Project name")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
     parser.add_argument("--long-method-depth", type=int, default=3, help="Max callee layers to inline for long-method expansion (None means unlimited).")
+    parser.add_argument("--force", action="store_true", help="Force re-analysis and re-testing even if cached results exist.")
     return parser.parse_args()
 
 

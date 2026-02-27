@@ -10,8 +10,8 @@ from tqdm import tqdm
 
 
 class DuplicatedMethodCollector(BaseCollector):
-    def __init__(self, project_path, project_name, src_path, all_definitions, family_classes) -> None:
-        super().__init__(project_path, project_name, src_path, all_definitions, family_classes)
+    def __init__(self, project_path, project_name, src_path, commitid, all_definitions, family_classes) -> None:
+        super().__init__(project_path, project_name, src_path, commitid, all_definitions, family_classes)
 
     def name(self):
         return "Duplicated"
@@ -156,13 +156,14 @@ class DuplicatedMethodCollector(BaseCollector):
                 
             if len(before_refactor_code) == 0:
                 continue
+            smell_content = self.create_diff_file(caller_file_contents)
             duplicated_methods.append({
                 "type": self.name(),
                 "meta":{"calling_times": valid_calling_times, "num_caller": len(selected_callers) , "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
-                "caller_file_content": caller_file_contents
+                "smell_content": smell_content
             })
         
         # 按被调用方法的总行数降序排序
