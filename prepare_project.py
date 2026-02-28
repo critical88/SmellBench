@@ -37,9 +37,11 @@ def build_one_repo(project_name):
     os.makedirs(image_dir, exist_ok=True)
     if isinstance(conda_env_create, list):
         conda_env_create = " && ".join(conda_env_create)
-    if isinstance(build_cmd, list):
-        build_cmd = [ f"conda run -n {env_name} {cmd}" for cmd in build_cmd ]
-        build_cmd = " && ".join(build_cmd)
+    
+    if isinstance(build_cmd, str):
+        build_cmd = [build_cmd]
+    build_cmd = [ f"conda run -n {env_name} {cmd}" for cmd in build_cmd ]
+    build_cmd = " && ".join(build_cmd)
     # Dockerfile
     os.makedirs(image_dir, exist_ok=True)
     dockerfile = f"""\
@@ -70,12 +72,13 @@ CMD [\"/bin/bash\"]
 
     print(f"Successfully built project image: {image.tags[0]}")
 
-    run_construct(project_name, project_tag)
+    return run_construct(project_name, project_tag)
 
 def build_repo_images() -> None:
     
     print(f"Creating Dockerfile for projects")
     projects = list(repo_dict.keys())
+    # projects = ["pandas"]
     # projects = ["click", "jinja", "numpy"]
 
     max_workers = 3

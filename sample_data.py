@@ -238,4 +238,4 @@ def adapter(benchmark_file: str):
 
 if __name__ == "__main__":
     benchmark_file = sample_data()
-    adapter(benchmark_file)
+    # adapter(benchmark_file)

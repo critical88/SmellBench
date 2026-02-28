@@ -1,0 +1,20 @@
+version = "0.1"
+
+[metadata]
+author_name = "linfake"
+author_email = "fklin@mail.ustc.edu.cn"
+language = "python"
+
+[verifier]
+timeout_sec = 30
+
+[agent]
+timeout_sec = 600
+
+[environment]
+build_timeout_sec = 1800
+docker_image = "smellbench_{repo_name}:latest"
+allow_internet = true
+cpus = 1
+memory = '4G'
+storage = '10G'

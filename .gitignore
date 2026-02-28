@@ -10,8 +10,8 @@ run/refactor_eval
 *.xml
 *.jsonl
 .repo_lock
+*/SmellBench/*
 SmellBench/*
 docker_images/*
 logs/*
 jobs/*
-harbor
