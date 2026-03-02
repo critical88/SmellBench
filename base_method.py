@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from typing import Dict, List, Tuple, Set
 import textwrap
 from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL, replace_file_content, _run_git_command
+from eval_utils import _remove_ground_truth_callees
 class BaseCollector():
     def __init__(self, project_path:str, project_name:str, src_path:str, commitid: str, all_definitions:Dict[Tuple, Dict], family_classes) -> None:
         """
@@ -1248,23 +1249,49 @@ Callee:
         }
     
     
-    def create_diff_file(self, caller_file_content):
+    def create_diff_file(self, caller_file_content, callers=None):
         repo_path = os.path.join(self.project_path, self.project_name)
-
+        def _has_staged_changes(project_repo) -> bool:
+            result = _run_git_command(["diff", "--cached", "--quiet"], check=False, cwd=project_repo)
+            if result.returncode in (0, 1):
+                return result.returncode == 1
+            raise RuntimeError(f"Unexpected git diff --cached return code {result.returncode}")
+        
         try:
+            written_files = set()
+            ground_truth = {}
             for code_item in caller_file_content:
                 module = code_item.get('module_path', '').lstrip(self.module_name).lstrip(".")
                 file_path = os.path.join(repo_path, self.src_path, module.replace(".", os.sep) + ".py")
+                written_files.add(file_path)
+                file_content, _ = self._read_file(file_path)
+                ground_truth[file_path] = file_content
                 success = replace_file_content(file_path, code_item.get('code', ''))
                 if not success:
                     print(f"Failed to replace file {file_path}")
+            written_files = list(written_files)
+            if callers is not None:
+                _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers)
+                
+            smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
             
-            process_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            smell_content = smell_ret.stdout
+            _run_git_command(["add", *written_files], cwd=repo_path)
+            if _has_staged_changes(repo_path):
+                _run_git_command(["commit", "-m", f"[baseline] smell"], cwd=repo_path)
+                intermit_commit_id = _run_git_command(["rev-parse", "HEAD"], cwd=repo_path).stdout
+                intermit_commit_id = intermit_commit_id.strip()
             
-            return process_ret.stdout
+            for file_path, file_content in ground_truth.items():
+                success = replace_file_content(file_path, file_content)
+            gt_ret = _run_git_command( [ "diff", intermit_commit_id], cwd=repo_path)
+            gt_content = gt_ret.stdout
+
+
+
         finally:
             _run_git_command(["reset", "--hard", self.commitid], cwd=repo_path)
-        
+    
     def collect(self, all_calls, all_class_parents, family_classes):
         """
         @param callee_mapping: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}

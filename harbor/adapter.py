@@ -7,31 +7,40 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, List, Optional, Tuple, Dict
 
-from datasets import load_dataset
-from utils import get_image_names, get_test_commands, read_text, render_literal
-from ..eval_utils import build_prompt
+from utils import read_text, render_literal, build_prompt
 
 @dataclass
 class SmellBenchRecord:
     instance_id: str
-    repo: str
-    base_commit: str
-    problem_statement: str
+    project_name: str
     type: str
-    smell_content: Optional[str] = None
-    test_cmd: Optional[str] = None
+    meta: Dict
+    testsuites:List[str]
+    after_refactor_code: List
+    before_refactor_code: List
+    smell_content: str
+    hash: str
+    commit_hash:str
+    name: str
+    settings: Dict
 
     @classmethod
     def from_dict(cls, d: dict) -> "SmellBenchRecord":
         return cls(
             instance_id=d["instance_id"],
-            repo=d["repo"],
-            base_commit=d["base_commit"],
-            type=d.get("type", "Long"),
-            smell_content=d.get("smell_content"),
-            test_cmd=d.get("test_cmd"),
+            type=d['type'],
+            meta=d['meta'],
+            project_name=d['project_name'],
+            testsuites=d['testsuites'],
+            after_refactor_code= d['after_refactor_code'],
+            before_refactor_code=d['before_refactor_code'],
+            smell_content=d['smell_content'],
+            hash=d['hash'],
+            commit_hash=d['commit_hash'],
+            name=d['name'],
+            settings=d['settings']
         )
 
 
@@ -79,6 +88,8 @@ class HarborTaskPaths:
 
         self.test_sh_path = self.tests_dir / "test.sh"
         self.config_json_path = self.tests_dir / "config.json"
+        self.instance_json_path = self.task_dir / "instance.json"
+        self.smell_path = self.task_dir / "smell.diff"
         self.dockerfile_path = self.environment_dir / "Dockerfile"
         self.solve_sh_path = self.solution_dir / "solve.sh"
 
@@ -119,14 +130,14 @@ class SmellBenchToHarbor:
 
         # Load dataset + docker image mapping once
         self.loader = SmellBenchLoader()
-        self.id_to_docker_image = self._build_image_map()
+        # self.id_to_docker_image = self._build_image_map()
 
         self.max_timeout = float(max_timeout_sec)
 
-    def _build_image_map(self) -> dict:
+    # def _build_image_map(self) -> dict:
         # get_image_names expects list of records, returns {instance_id: docker_image}
-        records = self.loader.all_records()
-        return get_image_names(records)
+        # records = self.loader.all_records()
+        # return get_image_names(records)
 
     def get_all_ids(self) -> List[str]:
         """Convenience accessor for all instance_ids (sorted)."""
@@ -147,47 +158,50 @@ class SmellBenchToHarbor:
         # instruction.md
         instr_tpl = read_text(self.t_instruction)
         
-        instruct = build_prompt(vars(rec), use_code_agent=True, use_test=False)
-        instr = render_literal(
-            instr_tpl,
-            instruct=instruct,
-        )
-        if not instr.endswith("\n"):
-            instr += "\n"
-        paths.instruction_path.write_text(instr)
+        instruct = build_prompt(instr_tpl, vars(rec), use_code_agent=True, use_test=False)
+        if not instruct.endswith("\n"):
+            instruct += "\n"
+        paths.instruction_path.write_text(instruct)
 
         # task.toml
         cfg_tpl = read_text(self.t_config)
         cfg = render_literal(
             cfg_tpl,
-            repo_name=rec.repo,
+            repo_name=rec.project_name,
             max_timeout=str(int(self.max_timeout)),
         )
-        paths.config_path.write_text(cfg)
 
         # tests/config.json
         datum = dict(self.loader.get_raw(rec.instance_id))
+        instance_json = json.dumps(datum, indent=2)
+        paths.instance_json_path.write_text(instance_json)
+
+        paths.smell_path.write_text(rec.smell_content)
+
+        datum.pop("before_refactor_code")
+        datum.pop("after_refactor_code")
+        datum.pop("smell_content")
         paths.config_json_path.write_text(json.dumps(datum, indent=2))
 
         # tests/test.sh
         test_sh_tpl = read_text(self.t_test_sh)
-        test_commands = get_test_commands(
-            rec.test_patch, rec.repo, rec.version, rec.base_commit
-        )
-        test_sh = render_literal(test_sh_tpl, test_commands=test_commands)
+        # test_commands = get_test_commands(
+        #     rec.test_patch, rec.repo, rec.version, rec.base_commit
+        # )
+        test_sh = render_literal(test_sh_tpl)
         paths.test_sh_path.write_text(test_sh)
         paths.test_sh_path.chmod(0o755)
 
         # environment/Dockerfile
-        docker_image = self.id_to_docker_image[rec.instance_id]
+        # docker_image = self.id_to_docker_image[rec.instance_id]
         dockerfile_tpl = read_text(self.t_dockerfile)
-        dockerfile = render_literal(dockerfile_tpl, docker_image=docker_image)
+        dockerfile = render_literal(dockerfile_tpl, repo_name=rec.name)
         paths.dockerfile_path.write_text(dockerfile)
 
         # solution/solve.sh
         solve_tpl = read_text(self.t_solve)
-        patch_text = (rec.patch or "").strip()
-        solve_sh = render_literal(solve_tpl, patch=patch_text)
+        # patch_text = (rec.patch or "").strip()
+        solve_sh = render_literal(solve_tpl)
         paths.solve_sh_path.write_text(solve_sh)
         paths.solve_sh_path.chmod(0o755)
 

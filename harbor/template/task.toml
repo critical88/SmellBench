@@ -9,10 +9,10 @@ language = "python"
 timeout_sec = 30
 
 [agent]
-timeout_sec = 600
+timeout_sec = {max_timeout}
 
 [environment]
-build_timeout_sec = 1800
+build_timeout_sec = {max_timeout}
 docker_image = "smellbench_{repo_name}:latest"
 allow_internet = true
 cpus = 1

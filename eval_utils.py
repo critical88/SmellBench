@@ -7,6 +7,9 @@ from prompts import *
 import json
 from utils import _log, hashcode, strip_python_comments, _module_relative_path,create_test_command
 import ast
+import os
+from collections import defaultdict
+import uuid
 
 CODE_TEXT_FIELDS = ["code", "source", "body", "text", "snippet"]
 
@@ -451,6 +454,136 @@ def collect_code_blocks(case: Dict, use_code_agent:bool=False) -> List[str]:
             code += f"\nthe related code is: \n```python\n{item['code']}\n```"
         blocks.append(code)
     return blocks
+
+def _collect_label_callees(callers) -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    seen: Set[Tuple[str, Optional[str], str]] = set()
+    for caller in callers:
+        callees = caller.get("callees", []).copy()
+        while len(callees) > 0:
+            callee = callees.pop()
+            position = callee.get("position") or {}
+            module_path = position.get("module_path")
+            method_name = position.get("method_name")
+            class_name = position.get("class_name")
+            if not module_path or not method_name:
+                continue
+            # ignore the callee that recursive calling
+            if caller['position'] == position:
+                continue
+            key = (module_path, class_name, method_name)
+            if key in seen:
+                continue
+            seen.add(key)
+            callees.extend(callee.get('callees', []))
+            grouped[module_path].append(
+                {
+                    "class_name": class_name,
+                    "method_name": method_name,
+                }
+            )
+    return grouped
+
+def _remove_ground_truth_callees(project_name, project_path, src_path, callers) -> List[Dict[str, Any]]:
+    callee_map = _collect_label_callees(callers)
+    project_repo = os.path.join(project_path, project_name)
+    removal_records: List[Dict[str, Any]] = []
+    for module_path, entries in callee_map.items():
+        rel_path = _module_relative_path(module_path, src_path)
+        abs_path = project_repo / rel_path
+        if not abs_path.exists():
+            continue
+        try:
+            source = abs_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        targets = {(entry["class_name"], entry["method_name"]) for entry in entries}
+        spans = _find_function_spans(source, targets)
+        if not spans:
+            continue
+        lines = source.splitlines(keepends=True)
+        file_records: List[Dict[str, Any]] = []
+        for span in sorted(spans, key=lambda item: item["start"], reverse=True):
+            start_idx = max(span["start"] - 1, 0)
+            end_idx = min(span["end"], len(lines))
+            if start_idx >= len(lines):
+                continue
+            original_segment = "".join(lines[start_idx:end_idx])
+            if not original_segment.strip():
+                continue
+            placeholder_token = f"__PLACEHOLDER__{uuid.uuid4().hex}__"
+            placeholder_line = f"# {placeholder_token}\n"
+            lines[start_idx:end_idx] = [placeholder_line]
+            file_records.append(
+                {
+                    "file_path": abs_path,
+                    "placeholder": placeholder_line,
+                    "original": original_segment,
+                    "module_path": module_path,
+                    "class_name": span.get("class_name"),
+                    "method_name": span["method_name"],
+                }
+            )
+        if file_records:
+            abs_path.write_text("".join(lines), encoding="utf-8")
+            removal_records.extend(file_records)
+    return removal_records
+
+def _find_function_spans(
+        source: str,
+        targets: Set[Tuple[Optional[str], str]],
+    ) -> List[Dict[str, Any]]:
+        spans: List[Dict[str, Any]] = []
+        if not targets:
+            return spans
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return spans
+
+        class _SpanCollector(ast.NodeVisitor):
+            def __init__(self, target_lookup: Set[Tuple[Optional[str], str]]) -> None:
+                self.targets = target_lookup
+                self.class_stack: List[str] = []
+
+            def visit_ClassDef(self, node: ast.ClassDef) -> None:  # type: ignore[override]
+                self.class_stack.append(node.name)
+                self.generic_visit(node)
+                self.class_stack.pop()
+
+            def _record_span(self, node: ast.AST, name: str) -> None:
+                class_name = self.class_stack[-1] if self.class_stack else None
+                key = (class_name, name)
+                lineno = getattr(node, "lineno", None)
+                end_lineno = getattr(node, "end_lineno", None)
+                if key not in self.targets or lineno is None or end_lineno is None:
+                    return
+                decorators = getattr(node, "decorator_list", [])
+                decorator_lines = [
+                    getattr(decorator, "lineno", lineno) for decorator in decorators if hasattr(decorator, "lineno")
+                ]
+                if decorator_lines:
+                    lineno = min(lineno, min(decorator_lines))
+                spans.append(
+                    {
+                        "class_name": class_name,
+                        "method_name": name,
+                        "start": lineno,
+                        "end": end_lineno,
+                    }
+                )
+
+            def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # type: ignore[override]
+                self._record_span(node, node.name)
+                self.generic_visit(node)
+
+            def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # type: ignore[override]
+                self._record_span(node, node.name)
+                self.generic_visit(node)
+
+        collector = _SpanCollector(targets)
+        collector.visit(tree)
+        return spans
 
 def build_prompt(case: Dict[str, Any], use_code_agent=False, use_test=False) -> str:
     code_sections = collect_code_blocks(case, use_code_agent)

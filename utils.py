@@ -196,6 +196,7 @@ def create_test_command(test_file_paths=[], test_cmd="", envs=None):
         cmd = ["pytest", "-x"] + cmd
     return cmd
 
+
 def install_repo(spec, project_path="../project"):
     repo_name = spec['name']
 

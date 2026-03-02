@@ -1,6 +1,12 @@
-FROM smellbench_{REPO_NAME}:latest
-WORKDIR /workspace/project/{REPO_NAME}
+FROM smellbench_{repo_name}:latest
+WORKDIR /workspace/project/{repo_name}
 
-RUN git apply smell.diff
+COPY ../smell.diff /workspace/
+
+RUN git apply /workspace/smell.diff
+
+RUN git rev-parse HEAD > /workspace/smell_commit_id.txt
+
+COPY ../instance.json /workspace/
 
 CMD ["/bin/bash"]
