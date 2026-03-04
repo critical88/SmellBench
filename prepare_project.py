@@ -18,8 +18,15 @@ LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def build_base_image() -> None:
+    images = client.images.list()
+    base_tag = "smellbench_base:latest"
+    if any(base_tag in tag for image in images for tag in image.tags):
+        print(f"Base image '{base_tag}' already exists. Skipping build.")
+        return 
+    
     print(f"Building base image")
-    image, logs = client.images.build(path=".", dockerfile="Dockerfile", tag="smellbench_base:latest")
+
+    image, logs = client.images.build(path=".", dockerfile="Dockerfile", tag=base_tag, rm=True)
     print(f"Successfully built base image: {image.tags[0]}")
 
 def build_one_repo(project_name):
@@ -63,12 +70,15 @@ CMD [\"/bin/bash\"]
 """
     with open(os.path.join(image_dir, "Dockerfile"), "w") as f:
         f.write(dockerfile.strip() + "\n")
-    
-    print("Building image for project:", project_name)
 
     image_dir = base_image_dir / project_name
 
-    image, logs = client.images.build(path=str(image_dir), tag=project_tag)
+    if any(project_tag in tag for image in client.images.list() for tag in image.tags):
+        print(f"Image '{project_tag}' already exists. Skipping build.")
+        return run_construct(project_name, project_tag)
+
+    print("Building image for project:", project_name)
+    image, logs = client.images.build(path=str(image_dir), tag=project_tag, rm=True)
 
     print(f"Successfully built project image: {image.tags[0]}")
 
@@ -77,8 +87,8 @@ CMD [\"/bin/bash\"]
 def build_repo_images() -> None:
     
     print(f"Creating Dockerfile for projects")
-    projects = list(repo_dict.keys())
-    # projects = ["pandas"]
+    # projects = list(repo_dict.keys())
+    projects = ["click"]
     # projects = ["click", "jinja", "numpy"]
 
     max_workers = 3
