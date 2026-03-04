@@ -1249,7 +1249,7 @@ Callee:
         }
     
     
-    def create_diff_file(self, caller_file_content, callers=None):
+    def create_diff_file(self, caller_file_content, callers=None, remove_callees=False):
         repo_path = os.path.join(self.project_path, self.project_name)
         def _has_staged_changes(project_repo) -> bool:
             result = _run_git_command(["diff", "--cached", "--quiet"], check=False, cwd=project_repo)
@@ -1263,19 +1263,27 @@ Callee:
             for code_item in caller_file_content:
                 module = code_item.get('module_path', '').lstrip(self.module_name).lstrip(".")
                 file_path = os.path.join(repo_path, self.src_path, module.replace(".", os.sep) + ".py")
-                written_files.add(file_path)
+                written_files.add(os.path.relpath(file_path , repo_path))
                 file_content, _ = self._read_file(file_path)
                 ground_truth[file_path] = file_content
                 success = replace_file_content(file_path, code_item.get('code', ''))
                 if not success:
                     print(f"Failed to replace file {file_path}")
-            written_files = list(written_files)
-            if callers is not None:
-                _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers)
-                
-            smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
             
+            smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            # only consider the smell diff that can pass the test
             smell_content = smell_ret.stdout
+
+            if remove_callees:
+                if callers is None:
+                    raise ValueError("callers must be provided when remove_callees is True")
+                removal_records = _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers)
+                for r in removal_records:
+                    written_files.add(os.path.relpath(r['file_path'], repo_path))
+            written_files = list(written_files)
+            # consider the diff after removing callees as the final smell diff, which ensures the code agent can only see the smell diff without knowing the ground truth code 
+            final_smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            final_smell_content = final_smell_ret.stdout
             _run_git_command(["add", *written_files], cwd=repo_path)
             if _has_staged_changes(repo_path):
                 _run_git_command(["commit", "-m", f"[baseline] smell"], cwd=repo_path)
@@ -1287,11 +1295,14 @@ Callee:
             gt_ret = _run_git_command( [ "diff", intermit_commit_id], cwd=repo_path)
             gt_content = gt_ret.stdout
 
+            return smell_content, final_smell_content, gt_content
+
 
 
         finally:
             _run_git_command(["reset", "--hard", self.commitid], cwd=repo_path)
-    
+    def instance_id(self, hash):
+        return f"{self.project_name}-{self.name()}-{hash}".lower()
     def collect(self, all_calls, all_class_parents, family_classes):
         """
         @param callee_mapping: {(called_module, called_class, called_method_name): [(module_path, class_name, call_locations)]}

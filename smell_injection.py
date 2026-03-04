@@ -153,9 +153,9 @@ def analyze_codebase(args):
             "stat": result['stat']
         }
         json.dump(saved_json, f, indent=2)
-    caller_files_dir = os.path.join(output_base, 'caller_files')
-    saved_files = save_caller_file_contents(refactor_codes, caller_files_dir)
-    print(f"Saved {len(saved_files)} caller file copies to {caller_files_dir}")
+    # caller_files_dir = os.path.join(output_base, 'caller_files')
+    # saved_files = save_caller_file_contents(refactor_codes, caller_files_dir)
+    # print(f"Saved {len(saved_files)} caller file copies to {caller_files_dir}")
 
     return result
 

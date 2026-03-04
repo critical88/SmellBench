@@ -6,6 +6,7 @@ from tqdm import tqdm
 import random
 from typing import Dict, Tuple, List
 from utils import hashcode
+import json
 
 class LongMethodCollector(BaseCollector):
     MINIMAL_CALLEE_NUM = 1
@@ -188,15 +189,20 @@ class LongMethodCollector(BaseCollector):
         # 如果被调用方法的总行数超过阈值
         if total_callee_lines > self.TOTAL_CALLEE_LENGTH_THRESHOLD:
             caller_file_content = [{"code": "\n".join(caller_lines), "module_path": caller_module, "file_suffix": caller_method[2]}]
-            smell_content = self.create_diff_file(caller_file_content)
+            hash = hashcode(json.dumps(before_refactor_code))
+            instance_id = self.instance_id(hash)
+            smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_content, callers=after_refactor_code, remove_callees=True)
             long_method = {
+                "instance_id": instance_id,
                 "type": self.name(),
                 "meta":{"key": f"depth_{max_depth}", "depth": max_depth, "calling_times": len(replacements), "total_caller_lines": total_caller_lines, "total_callee_lines": total_callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
                 "smell_content": smell_content,
-                "hash": hashcode("\n".join(caller_lines))
+                "final_smell_content": final_smell_content,
+                "gt_content": gt_content,
+                "hash": hash
             }
             return long_method
     

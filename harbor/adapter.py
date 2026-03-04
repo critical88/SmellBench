@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from textwrap import dedent
 from typing import Callable, Iterable, List, Optional, Tuple, Dict
-
+import os
+import posixpath
 from utils import read_text, render_literal, build_prompt
 
 @dataclass
@@ -21,7 +22,8 @@ class SmellBenchRecord:
     after_refactor_code: List
     before_refactor_code: List
     smell_content: str
-    hash: str
+    gt_smell: str
+    final_smell_content: str
     commit_hash:str
     name: str
     settings: Dict
@@ -37,7 +39,8 @@ class SmellBenchRecord:
             after_refactor_code= d['after_refactor_code'],
             before_refactor_code=d['before_refactor_code'],
             smell_content=d['smell_content'],
-            hash=d['hash'],
+            final_smell_content=d['final_smell_content'],
+            gt_smell=d['gt_content'],
             commit_hash=d['commit_hash'],
             name=d['name'],
             settings=d['settings']
@@ -89,7 +92,8 @@ class HarborTaskPaths:
         self.test_sh_path = self.tests_dir / "test.sh"
         self.config_json_path = self.tests_dir / "config.json"
         self.instance_json_path = self.task_dir / "instance.json"
-        self.smell_path = self.task_dir / "smell.diff"
+        self.smell_path = self.environment_dir / "smell.diff"
+        self.gt_path = self.environment_dir / "gt.diff"
         self.dockerfile_path = self.environment_dir / "Dockerfile"
         self.solve_sh_path = self.solution_dir / "solve.sh"
 
@@ -174,14 +178,17 @@ class SmellBenchToHarbor:
         # tests/config.json
         datum = dict(self.loader.get_raw(rec.instance_id))
         instance_json = json.dumps(datum, indent=2)
-        paths.instance_json_path.write_text(instance_json)
+        paths.instance_json_path.write_text(instance_json, newline="\n")
 
-        paths.smell_path.write_text(rec.smell_content)
+        paths.smell_path.write_text(rec.final_smell_content, newline="\n")
+        paths.gt_path.write_text(rec.gt_smell, newline="\n")
 
         datum.pop("before_refactor_code")
         datum.pop("after_refactor_code")
         datum.pop("smell_content")
-        paths.config_json_path.write_text(json.dumps(datum, indent=2))
+        datum.pop("gt_content")
+        datum.pop("final_smell_content")
+        paths.config_json_path.write_text(json.dumps(datum, indent=2), newline="\n")
 
         # tests/test.sh
         test_sh_tpl = read_text(self.t_test_sh)
@@ -189,20 +196,22 @@ class SmellBenchToHarbor:
         #     rec.test_patch, rec.repo, rec.version, rec.base_commit
         # )
         test_sh = render_literal(test_sh_tpl)
-        paths.test_sh_path.write_text(test_sh)
+        paths.test_sh_path.write_text(test_sh, newline="\n")
         paths.test_sh_path.chmod(0o755)
 
         # environment/Dockerfile
         # docker_image = self.id_to_docker_image[rec.instance_id]
+        smell_rel_path = os.path.relpath(paths.smell_path, paths.environment_dir).replace(os.sep, posixpath.sep)
+        gt_rel_path = os.path.relpath(paths.gt_path, paths.environment_dir).replace(os.sep, posixpath.sep)
         dockerfile_tpl = read_text(self.t_dockerfile)
-        dockerfile = render_literal(dockerfile_tpl, repo_name=rec.name)
-        paths.dockerfile_path.write_text(dockerfile)
+        dockerfile = render_literal(dockerfile_tpl, repo_name=rec.name, commit_id=rec.commit_hash, smell_path=str(smell_rel_path), gt_path=str(gt_rel_path))
+        paths.dockerfile_path.write_text(dockerfile,newline="\n")
 
         # solution/solve.sh
         solve_tpl = read_text(self.t_solve)
         # patch_text = (rec.patch or "").strip()
-        solve_sh = render_literal(solve_tpl)
-        paths.solve_sh_path.write_text(solve_sh)
+        solve_sh = render_literal(solve_tpl, repo_name=rec.name)
+        paths.solve_sh_path.write_text(solve_sh, newline="\n")
         paths.solve_sh_path.chmod(0o755)
 
         return paths.task_dir

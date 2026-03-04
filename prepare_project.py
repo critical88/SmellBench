@@ -39,7 +39,8 @@ def build_one_repo(project_name):
     conda_env_create = repo_info.get("conda_env_create") # "conda create -n click-dev python==3.10 pytest pytest-cov"
     env_name = repo_info.get("env_name") # click-dev
     build_cmd = repo_info.get("build_cmd", "pip install -e .") #. "pip install -e \".[dev]\"",
-    
+    author = "smellbench"
+    email = "smellbench@example.com"
     image_dir = base_image_dir / project_name
     os.makedirs(image_dir, exist_ok=True)
     if isinstance(conda_env_create, list):
@@ -65,6 +66,9 @@ RUN git clone --recursive "$REPO_URL" {project_name} \
 WORKDIR /workspace/project/{project_name}
 RUN {conda_env_create}
 RUN {build_cmd}
+
+RUN git config --global user.email {email}
+RUN git config --global user.name {author}
 
 CMD [\"/bin/bash\"]
 """
@@ -144,23 +148,20 @@ def run_construct(project_name, project_tag):
     try:
         container.start()
 
-        with open(log_file_path, "w", encoding="utf-8") as f:
+        with open(log_file_path, "wb") as f:
             for line in container.logs(stream=True):
-                decoded = line.decode()
-                f.write(decoded)
+                # decoded = line.decode()
+                f.write(line)
                 f.flush()
 
         result = container.wait()
         exit_code = result["StatusCode"]
-
-        # container.remove()
 
         if exit_code == 0:
             return project_name, True
         else:
             return project_name, False
 
-        return exit_code
     except Exception as e:
         with open(log_file_path, "a", encoding="utf-8") as f:
             f.write(f"\nERROR: {str(e)}\n")

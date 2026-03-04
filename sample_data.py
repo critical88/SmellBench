@@ -91,8 +91,6 @@ def sample_data():
         for d in repo_data["refactor_codes"]:
             d['name'] = repo_name
             d['settings'] = repo_data['settings']
-            case_id = f"{d['name']}-{d['type']}-" + (hashlib.md5(json.dumps(d).encode("utf-8")).hexdigest())
-            d['instance_id'] = case_id
             if d['type'] == "Long":
                 if d['meta']['depth'] == 1:
                     simple_data.append(d)

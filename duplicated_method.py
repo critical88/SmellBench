@@ -5,9 +5,9 @@ import random
 from base_method import BaseCollector
 from collections import defaultdict
 import textwrap
-from utils import strip_python_comments
+from utils import strip_python_comments, hashcode
 from tqdm import tqdm
-
+import json
 
 class DuplicatedMethodCollector(BaseCollector):
     def __init__(self, project_path, project_name, src_path, commitid, all_definitions, family_classes) -> None:
@@ -156,14 +156,20 @@ class DuplicatedMethodCollector(BaseCollector):
                 
             if len(before_refactor_code) == 0:
                 continue
-            smell_content = self.create_diff_file(caller_file_contents)
+            smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_contents, callers=after_refactor_code, remove_callees=True)
+            hash = hashcode("\n".join(json.dumps(before_refactor_code)))
+            instance_id = self.instance_id(hash)
             duplicated_methods.append({
+                "instance_id": instance_id,
                 "type": self.name(),
                 "meta":{"calling_times": valid_calling_times, "num_caller": len(selected_callers) , "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
                 "after_refactor_code": after_refactor_code,
                 "before_refactor_code": before_refactor_code,
-                "smell_content": smell_content
+                "smell_content": smell_content,
+                "final_smell_content": final_smell_content,
+                "gt_content": gt_content,
+                "hash": hash
             })
         
         # 按被调用方法的总行数降序排序
