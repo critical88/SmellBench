@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from typing import Dict, List, Tuple, Set
 import textwrap
 from utils import strip_python_comments, _log, DEBUG_LOG_LEVEL, replace_file_content, _run_git_command
-from eval_utils import _remove_ground_truth_callees
+from eval_utils import _collect_label_callees, _remove_ground_truth_callees
 class BaseCollector():
     def __init__(self, project_path:str, project_name:str, src_path:str, commitid: str, all_definitions:Dict[Tuple, Dict], family_classes) -> None:
         """
@@ -1247,7 +1247,16 @@ Callee:
             'replacement': indented_body.splitlines(),
             'imports': imports
         }
-    
+    def extract_callers(self, ground_truth):
+        
+        callers = []
+        for gt in ground_truth:
+            caller_info = {
+                "position": gt['position'],
+                "callees": self.extract_callers(gt['callees']) if 'callees' in gt else []
+            }
+            callers.append(caller_info)
+        return callers
     
     def create_diff_file(self, caller_file_content, callers=None, remove_callees=False):
         repo_path = os.path.join(self.project_path, self.project_name)
@@ -1260,29 +1269,51 @@ Callee:
         try:
             written_files = set()
             ground_truth = {}
+            ### first we only collect ground truth code and do not replace the caller file, which ensures the smell diff can only contain the diff of caller files.
             for code_item in caller_file_content:
                 module = code_item.get('module_path', '').lstrip(self.module_name).lstrip(".")
                 file_path = os.path.join(repo_path, self.src_path, module.replace(".", os.sep) + ".py")
                 written_files.add(os.path.relpath(file_path , repo_path))
                 file_content, _ = self._read_file(file_path)
                 ground_truth[file_path] = file_content
+                # success = replace_file_content(file_path, code_item.get('code', ''))
+                # if not success:
+                #     print(f"Failed to replace file {file_path}")
+            
+            if remove_callees:
+                if callers is None:
+                    raise ValueError("callers must be provided when remove_callees is True")
+                
+                
+                removal_records = _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers, replace=False)
+                for r in removal_records:
+                    file_path = str(r['file_path'])
+                    rel_path = os.path.relpath(file_path, repo_path)
+                    if rel_path in written_files:
+                        continue
+                    file_content, _ = self._read_file(file_path)
+                    ground_truth[file_path] = file_content
+                    written_files.add(rel_path)
+
+            for code_item in caller_file_content:
+                module = code_item.get('module_path', '').lstrip(self.module_name).lstrip(".")
+                file_path = os.path.join(repo_path, self.src_path, module.replace(".", os.sep) + ".py")
                 success = replace_file_content(file_path, code_item.get('code', ''))
                 if not success:
                     print(f"Failed to replace file {file_path}")
             
-            smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            smell_ret = _run_git_command( [ "diff", '--ignore-space-at-eol', self.commitid], cwd=repo_path)
             # only consider the smell diff that can pass the test
             smell_content = smell_ret.stdout
 
             if remove_callees:
                 if callers is None:
                     raise ValueError("callers must be provided when remove_callees is True")
-                removal_records = _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers)
-                for r in removal_records:
-                    written_files.add(os.path.relpath(r['file_path'], repo_path))
+                removal_records = _remove_ground_truth_callees(self.project_name, self.project_path, self.src_path, callers, replace=True)
+                    
             written_files = list(written_files)
             # consider the diff after removing callees as the final smell diff, which ensures the code agent can only see the smell diff without knowing the ground truth code 
-            final_smell_ret = _run_git_command( [ "diff", self.commitid], cwd=repo_path)
+            final_smell_ret = _run_git_command( [ "diff", '--ignore-space-at-eol', self.commitid], cwd=repo_path)
             final_smell_content = final_smell_ret.stdout
             _run_git_command(["add", *written_files], cwd=repo_path)
             if _has_staged_changes(repo_path):
@@ -1292,7 +1323,7 @@ Callee:
             
             for file_path, file_content in ground_truth.items():
                 success = replace_file_content(file_path, file_content)
-            gt_ret = _run_git_command( [ "diff", intermit_commit_id], cwd=repo_path)
+            gt_ret = _run_git_command( [ "diff", '--ignore-space-at-eol', intermit_commit_id], cwd=repo_path)
             gt_content = gt_ret.stdout
 
             return smell_content, final_smell_content, gt_content

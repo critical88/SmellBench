@@ -484,7 +484,7 @@ def _collect_label_callees(callers) -> Dict[str, List[Dict[str, Any]]]:
             )
     return grouped
 
-def _remove_ground_truth_callees(project_name, project_path, src_path, callers) -> List[Dict[str, Any]]:
+def _remove_ground_truth_callees(project_name, project_path, src_path, callers, replace=False) -> List[Dict[str, Any]]:
     callee_map = _collect_label_callees(callers)
     project_repo = os.path.join(project_path, project_name)
     removal_records: List[Dict[str, Any]] = []
@@ -525,7 +525,8 @@ def _remove_ground_truth_callees(project_name, project_path, src_path, callers) 
                 }
             )
         if file_records:
-            abs_path.write_text("".join(lines), encoding="utf-8")
+            if replace:
+                abs_path.write_text("".join(lines), encoding="utf-8")
             removal_records.extend(file_records)
     return removal_records
 

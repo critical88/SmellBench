@@ -73,8 +73,8 @@ class DuplicatedMethodCollector(BaseCollector):
             callee = {"source": called_definition['source'], 'decorators': called_definition['decorators'], "file": callee_file }
             callee['position'] = {"module_path": callee_method[0], "class_name": callee_method[1], "method_name": callee_method[2]}
 
-            before_refactor_code = []
-            after_refactor_code = []
+            smell_codes = []
+            gt_codes = []
             caller_file_contents = []
             callee_testunits = self._find_related_testsuite(callee_method)
             if len(callee_testunits) > 10:
@@ -135,7 +135,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 replacements = caller_replacement_dict[caller_module][caller_method]
                 for replacement in replacements:
                     after_refactor['callees'].append({"type": "callee", "decorators": called_definition['decorators'], "start": replacement['start'], "end": replacement['end'], "code": called_definition['source'], 'position': callee['position']})
-                after_refactor_code.append(after_refactor)
+                gt_codes.append(after_refactor)
                 selected_replacements[caller_module][caller_method] = replacements
                 valid_calling_times += len(replacements)
                 caller_testunits = self._find_related_testsuite(caller_method)
@@ -146,7 +146,7 @@ class DuplicatedMethodCollector(BaseCollector):
             for caller_module, caller_replacements in selected_replacements.items():
 
                 before_refactors, caller_lines = self.do_replacement(caller_replacements, caller_module)
-                before_refactor_code.extend(before_refactors)
+                smell_codes.extend(before_refactors)
 
                 caller_file_contents.append({
                     "code": "\n".join(caller_lines), 
@@ -154,19 +154,19 @@ class DuplicatedMethodCollector(BaseCollector):
                     "file_suffix": f"dup_{callee_method[2]}"
                 })
                 
-            if len(before_refactor_code) == 0:
+            if len(smell_codes) == 0:
                 continue
-            smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_contents, callers=after_refactor_code, remove_callees=True)
-            hash = hashcode("\n".join(json.dumps(before_refactor_code)))
+            smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_contents, callers=gt_codes, remove_callees=True)
+            hash = hashcode("\n".join(json.dumps(smell_codes)))
             instance_id = self.instance_id(hash)
+            callers = self.extract_callers(gt_codes)
             duplicated_methods.append({
                 "instance_id": instance_id,
                 "type": self.name(),
                 "meta":{"calling_times": valid_calling_times, "num_caller": len(selected_callers) , "callee_lines": callee_lines},
                 "testsuites": list(testsuites),
-                "after_refactor_code": after_refactor_code,
-                "before_refactor_code": before_refactor_code,
                 "smell_content": smell_content,
+                "callers": callers,
                 "final_smell_content": final_smell_content,
                 "gt_content": gt_content,
                 "hash": hash

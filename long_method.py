@@ -41,6 +41,7 @@ class LongMethodCollector(BaseCollector):
         caller_module = method_key[0]
         caller_file = self.get_file_from_module(caller_module)
         callees = []
+        gt_callees = []
         imports = []
         testunits = set()
         replacements = []
@@ -52,12 +53,13 @@ class LongMethodCollector(BaseCollector):
             definition, modified_called_method = self._find_callee(called_method, self.all_definitions, all_class_parents)
             if definition is None:
                 continue
-            
+            gt_callee_source = definition['source']
             sub_source = self._expand_method_source(root_caller_method, modified_called_method, all_calls, all_class_parents, depth + 1, max_depth)
             if sub_source is not None:
-                callee_source, sub_callees = sub_source[0], sub_source[2][0]['callees']
+                callee_source, gt_sub_callees, sub_callees = sub_source[0], sub_source[2][0]['callees'], sub_source[3][0]['callees']
             else:
-                callee_source = definition['source']
+                callee_source = gt_callee_source
+                gt_sub_callees = []
                 sub_callees = []
             callee_len = self._normalized_function_length(callee_source)
             if callee_len < 5:
@@ -94,20 +96,35 @@ class LongMethodCollector(BaseCollector):
                                 "code": callee_source, 
                                 "callees": sub_callees,
                                 'position': callee['position']})
+                gt_callees.append({"type": "callee", 
+                                "decorators": definition['decorators'], 
+                                "start": caller_replacement['start'], 
+                                "end": caller_replacement['end'], 
+                                "code": gt_callee_source, 
+                                "callees": gt_sub_callees,
+                                'position': callee['position']})
             if len(replacements) >= self.MINIMAL_CALLEE_NUM:
                 if sub_source is not None:
-                    _, _, sub_callee, _imports, _testunits = sub_source
+                    _, _, _, sub_callee, _imports, _testunits = sub_source
                     imports.extend(_imports)
                     testunits.update(_testunits)
-        expanded_source = caller_method_definition['source']
+        gt_source = caller_method_definition['source']
+        expanded_source = gt_source
         if len(replacements) >= self.MINIMAL_CALLEE_NUM:
             method_lines = caller_method_definition['source'].splitlines()
             for replacement in sorted(replacements, key=lambda x: x['rel_start'], reverse=True):
                 method_lines[replacement['rel_start']:replacement['rel_end']] = replacement['replacement']
             expanded_source = "\n".join(method_lines)
-        after_caller_replacement = [{"type": "caller" if depth==0 else "callee", "code": expanded_source, "position": {"module_path": method_key[0], "class_name": method_key[1], "method_name": method_key[2]}, 'callees': callees}]
+        gt_info = [{"type": "caller" if depth==0 else "callee", 
+                    "code": gt_source, 
+                    "position": {"module_path": method_key[0], "class_name": method_key[1], "method_name": method_key[2]}, 
+                    'callees': gt_callees}]
+        after_caller_replacement = [{"type": gt_info[0]['type'], 
+                                     "code": expanded_source, 
+                                     "position": gt_info[0]['position'], 
+                                     'callees': callees}]
         
-        self._expanded_method_cache[cache_key] = (expanded_source, replacements, after_caller_replacement, imports, testunits)
+        self._expanded_method_cache[cache_key] = (expanded_source, replacements, gt_info, after_caller_replacement, imports, testunits)
 
         return self._expanded_method_cache[cache_key]
     
@@ -135,48 +152,10 @@ class LongMethodCollector(BaseCollector):
         if caller_source is None:
             return
         
-        _, caller_replacements, after_caller_replacement, imports, callee_testsuites = caller_source
+        _, caller_replacements, gt_content, _, imports, callee_testsuites = caller_source
         testsuites.update(callee_testsuites)
         replacements.extend(caller_replacements)
-        after_refactor_code = after_caller_replacement
-        # for called_method, caller_locations in callee_methods.items():
-        #     if called_method == caller_method:
-        #         continue
-        #     # 获取被调用方法, 由于存在重载问题， 需要进行多次查找
-        #     definition, modified_called_method = self._find_callee(called_method, self.all_definitions, all_class_parents)
-        #     if definition is None:
-        #         continue
-        #     expanded_callee_source = self._expand_method_source(modified_called_method, all_calls, all_class_parents, depth=1)
-        #     callee_source = expanded_callee_source if expanded_callee_source is not None else definition['source']
-        #     callee_len = self._normalized_function_length(callee_source)
-        #     if callee_len < 5:
-        #         continue
-        #     callee_testsuites = self._find_related_testsuite(called_method)
-        #     if len(callee_testsuites) > 3:
-        #         callee_testsuites = random.choices(list(callee_testsuites), k=3)
-        #     testsuites.update(set(callee_testsuites))
-        #     callee_file = self.get_file_from_module(modified_called_method[0])
-        #     callee = {"source": callee_source, 'decorators': definition['decorators'], "file": callee_file }
-        #     callee['position'] = {"module_path": modified_called_method[0], "class_name": modified_called_method[1], "method_name": modified_called_method[2]}
-        #     for caller_location in caller_locations:
-        #         caller = caller_location
-        #         caller['source'] = caller_method_definition['source']
-        #         caller['position'] = {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
-        #         caller['file'] = caller_file
-        #         caller['caller_start_line'] = caller_method_definition['start_line']
-        #         caller_replacement = self.generate_replacement_caller_from_callee(caller, callee, all_class_parents)
-        #         if caller_replacement is None:
-        #             continue
-                    
-        #         if isinstance(caller_replacement['replacement'], str):
-        #             caller_replacement['replacement'] = caller_replacement['replacement'].splitlines()
-        #         caller_replacement['lines'] = len(callee_source.splitlines())
-        #         rel_start = caller_replacement['start'] - caller_method_definition['start_line'] + 1
-        #         rel_end = caller_replacement['end'] - caller_method_definition['start_line'] + 1
-        #         caller_replacement['rel_start'] = rel_start
-        #         caller_replacement['rel_end'] = rel_end
-        #         after_refactor_code[0]['callees'].append({"type": "callee", "decorators": definition['decorators'], "start": caller_replacement['start'], "end": caller_replacement['end'], "code": callee_source, 'position': callee['position']})
-        #         replacements.append(caller_replacement)
+        ground_truth = gt_content
         if len(replacements) < self.MINIMAL_CALLEE_NUM:
             return
         replacements[0]['imports'] = imports
@@ -184,24 +163,24 @@ class LongMethodCollector(BaseCollector):
             caller_method: replacements
         }
         total_callee_lines = sum([len(r['replacement']) for r in replacements])
-        before_refactor_code, caller_lines = self.do_replacement(replacement_dict, caller_module)
-        total_caller_lines = len(before_refactor_code[0]['code'].splitlines())
+        smell_codes, caller_lines = self.do_replacement(replacement_dict, caller_module)
+        total_caller_lines = len(smell_codes[0]['code'].splitlines())
         # 如果被调用方法的总行数超过阈值
         if total_callee_lines > self.TOTAL_CALLEE_LENGTH_THRESHOLD:
             caller_file_content = [{"code": "\n".join(caller_lines), "module_path": caller_module, "file_suffix": caller_method[2]}]
-            hash = hashcode(json.dumps(before_refactor_code))
+            hash = hashcode(json.dumps(smell_codes))
             instance_id = self.instance_id(hash)
-            smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_content, callers=after_refactor_code, remove_callees=True)
+            smell_diff_content, final_smell_diff_content, gt_diff_content = self.create_diff_file(caller_file_content, callers=ground_truth, remove_callees=True)
+            callers = self.extract_callers(ground_truth)
             long_method = {
                 "instance_id": instance_id,
                 "type": self.name(),
                 "meta":{"key": f"depth_{max_depth}", "depth": max_depth, "calling_times": len(replacements), "total_caller_lines": total_caller_lines, "total_callee_lines": total_callee_lines},
                 "testsuites": list(testsuites),
-                "after_refactor_code": after_refactor_code,
-                "before_refactor_code": before_refactor_code,
-                "smell_content": smell_content,
-                "final_smell_content": final_smell_content,
-                "gt_content": gt_content,
+                "callers": callers,
+                "smell_content": smell_diff_content,
+                "final_smell_content": final_smell_diff_content,
+                "gt_content": gt_diff_content,
                 "hash": hash
             }
             return long_method
@@ -213,7 +192,7 @@ class LongMethodCollector(BaseCollector):
         @param all_definitions: {(module, class, method_name): definition}
         
         call_locations: { (called_module, called_class, called_method_name): [caller_infos]}
-        @return: List of methods [{"type": LongMethod , "total_callee_lines": int, "after_refactor_code": after_refactor_code, "before_refactor_code": before_refactor_code, "caller_file_content": caller_file_content}]
+        @return: List of methods [{"type": LongMethod , "total_callee_lines": int,  }]
         
         在本方法中，主要是以单个方法为起点，搜索在此方法中调用的其他方法，并将搜索到的方法内容填充到caller中，以达到扩充caller内容的目的。
         """

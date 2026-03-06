@@ -1,0 +1,22 @@
+version = "0.1"
+
+[metadata]
+author_name = "linfake"
+author_email = "fklin@mail.ustc.edu.cn"
+repo_name = "{repo_name}"
+env_name = "{env_name}"
+language = "python"
+
+
+[verifier]
+timeout_sec = 30
+
+[agent]
+timeout_sec = {max_timeout}
+
+[environment]
+build_timeout_sec = {max_timeout}
+allow_internet = true
+cpus = 1
+memory = '4G'
+storage = '10G'

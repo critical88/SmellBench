@@ -9,7 +9,7 @@ from base_method import BaseCollector
 import json
 import traceback
 import subprocess
-from utils import pushd, _log, DEBUG_LOG_LEVEL
+from utils import pushd, _log, DEBUG_LOG_LEVEL, get_spec
 from pathlib import Path
 
 class MethodCallVisitor(ast.NodeVisitor):
@@ -523,11 +523,13 @@ class MethodAnalyzer():
     def _read_meta_info(self, project_name):
         testunit_file = os.path.join("output", project_name, f"function_testunit_mapping.json")
         if not os.path.exists(testunit_file):
-            raise Exception("please first run `testunit_coverage.py` to generate mapping file.")
+            raise Exception("please first run `ast_analyze.py` to generate mapping file.")
         with open(testunit_file, 'r', encoding='utf-8') as f:
             meta_info = json.load(f)
         if len(meta_info['functions']) == 0:
             raise Exception("failed to generate mapping file, please check the log and fix the bug then rerun it")
+        spec = get_spec(project_name)
+
         all_classes = set()
         all_class_parent = defaultdict(list)
         for _, _cls in meta_info['classes'].items():
@@ -542,8 +544,9 @@ class MethodAnalyzer():
         for k, v in functions_info.items():
             function_testunit[k] = v['tests']
             function_variables[k] = v['variable_types']
-            
-        return meta_info['meta'], all_classes, all_class_parent, function_testunit, function_variables
+        meta = meta_info['meta']
+        meta['env_name'] = spec['env_name']
+        return meta, all_classes, all_class_parent, function_testunit, function_variables
 
     def analyze_file(self, file_path) -> Tuple[Dict, Dict, Dict]:
         _log(f"Analyzing file: {file_path}")
