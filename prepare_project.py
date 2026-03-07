@@ -53,7 +53,7 @@ def build_one_repo(project_name):
     # Dockerfile
     os.makedirs(image_dir, exist_ok=True)
     dockerfile = f"""\
-FROM smellbench_base:latest
+FROM critical88/smellbench_base:latest
 WORKDIR /workspace/project
 
 ARG REPO_URL={repo_url}
@@ -91,8 +91,8 @@ CMD [\"/bin/bash\"]
 def build_repo_images() -> None:
     
     print(f"Creating Dockerfile for projects")
-    # projects = list(repo_dict.keys())
-    projects = ["click"]
+    projects = list(repo_dict.keys())
+    # projects = ["click"]
     # projects = ["click", "jinja", "numpy"]
 
     max_workers = 3

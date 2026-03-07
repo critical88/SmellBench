@@ -76,8 +76,6 @@ def sample_data():
     benchmark_file = os.path.join("output", "benchmark.jsonl")
     benchmark = []
     for repo_name, rules in sample_rules.items():
-        if repo_name != 'click':
-            continue
         repo_file = os.path.join("output",repo_name,  "successful_refactor_codes.json")
         if not os.path.exists(repo_file):
             print(f"{repo_name} didn't prepare the data")
