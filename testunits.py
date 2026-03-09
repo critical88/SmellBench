@@ -85,6 +85,9 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, smell_co
                     f.write(smell_content)
                 diff_file_path = os.path.abspath(diff_file)
                 _run_git_command(["apply", diff_file_path], cwd=project_path)
+            except Exception as e:
+                print(f"Error applying smell diff: {e}")
+                return False
             finally:
                 if os.path.exists(diff_file):
                     os.remove(diff_file)
