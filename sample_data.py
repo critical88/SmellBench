@@ -43,13 +43,13 @@ sample_rules = {
     "sphinx":{
         "simple": 8,
         "medium": 10,
-        "hard":10,
+        "hard":12,
         "duplicated":2
     },
     "scikit-learn":{
         "simple": 8,
         "medium": 12,
-        "hard":16,
+        "hard":14,
         "duplicated":3
     },
     "numpy":{
