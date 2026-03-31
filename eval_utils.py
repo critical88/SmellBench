@@ -512,7 +512,9 @@ def _remove_ground_truth_callees(project_name, project_path, src_path, callers, 
             if not original_segment.strip():
                 continue
             placeholder_token = f"__PLACEHOLDER__{uuid.uuid4().hex}__"
-            placeholder_line = f"# {placeholder_token}\n"
+            # remove placeholder to avoid hint for agent
+            # placeholder_line = f"# {placeholder_token}\n"
+            placeholder_line = ""
             lines[start_idx:end_idx] = [placeholder_line]
             file_records.append(
                 {
