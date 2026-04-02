@@ -1255,6 +1255,8 @@ Callee:
                 "position": gt['position'],
                 "callees": self.extract_callers(gt['callees']) if 'callees' in gt else []
             }
+            if "call_code" in gt:
+                caller_info['call_code'] = gt['call_code']
             callers.append(caller_info)
         return callers
     

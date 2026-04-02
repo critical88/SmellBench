@@ -102,6 +102,7 @@ class DuplicatedMethodCollector(BaseCollector):
                 
                 for caller_location in caller_locations:
                     caller = caller_location
+                    caller['call_code'] = caller['source']
                     caller['caller_start_line'] = caller_method_definition['start_line']
                     caller['source'] = caller_method_definition['source']
                     caller['position'] = {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}
@@ -117,6 +118,7 @@ class DuplicatedMethodCollector(BaseCollector):
                     rel_end = caller_replacement['end'] - caller_method_definition['start_line'] + 1
                     caller_replacement['rel_start'] = rel_start
                     caller_replacement['rel_end'] = rel_end
+                    caller_replacement['call_code'] = caller['call_code']
                     
                     replacements.append(caller_replacement)
                 if len(replacements) == 0:
@@ -134,7 +136,12 @@ class DuplicatedMethodCollector(BaseCollector):
                 after_refactor = {"type": "caller", "code": caller_method_definition['source'], "position": {"module_path": caller_method[0], "class_name": caller_method[1], "method_name": caller_method[2]}, 'callees': []}
                 replacements = caller_replacement_dict[caller_module][caller_method]
                 for replacement in replacements:
-                    after_refactor['callees'].append({"type": "callee", "decorators": called_definition['decorators'], "start": replacement['start'], "end": replacement['end'], "code": called_definition['source'], 'position': callee['position']})
+                    after_refactor['callees'].append({"type": "callee", 
+                                                      "decorators": called_definition['decorators'], 
+                                                      "start": replacement['start'], "end": replacement['end'], 
+                                                      "code": called_definition['source'],
+                                                      "call_code": replacement['call_code'],
+                                                      'position': callee['position']})
                 gt_codes.append(after_refactor)
                 selected_replacements[caller_module][caller_method] = replacements
                 valid_calling_times += len(replacements)

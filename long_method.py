@@ -74,6 +74,7 @@ class LongMethodCollector(BaseCollector):
 
             for caller_location in caller_locations:
                 caller = caller_location
+                caller['call_code'] = caller['source']
                 caller['source'] = caller_method_definition['source']
                 caller['position'] = {"module_path": method_key[0], "class_name": method_key[1], "method_name": method_key[2]}
                 caller['file'] = caller_file
@@ -93,7 +94,8 @@ class LongMethodCollector(BaseCollector):
                                 "decorators": definition['decorators'], 
                                 "start": caller_replacement['start'], 
                                 "end": caller_replacement['end'], 
-                                "code": callee_source, 
+                                "code": callee_source,
+                                "call_code": caller['call_code'],
                                 "callees": sub_callees,
                                 'position': callee['position']})
                 gt_callees.append({"type": "callee", 
@@ -101,6 +103,7 @@ class LongMethodCollector(BaseCollector):
                                 "start": caller_replacement['start'], 
                                 "end": caller_replacement['end'], 
                                 "code": gt_callee_source, 
+                                "call_code": caller['call_code'],
                                 "callees": gt_sub_callees,
                                 'position': callee['position']})
             if len(replacements) >= self.MINIMAL_CALLEE_NUM:
