@@ -164,7 +164,7 @@ class DuplicatedMethodCollector(BaseCollector):
             if len(smell_codes) == 0:
                 continue
             smell_content, final_smell_content, gt_content = self.create_diff_file(caller_file_contents, callers=gt_codes, remove_callees=True)
-            hash = hashcode("\n".join(json.dumps(smell_codes)))
+            hash = hashcode(json.dumps(smell_codes))
             instance_id = self.instance_id(hash)
             callers = self.extract_callers(gt_codes)
             duplicated_methods.append({
