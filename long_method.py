@@ -7,6 +7,7 @@ import random
 from typing import Dict, Tuple, List
 from utils import hashcode
 import json
+import copy
 
 class LongMethodCollector(BaseCollector):
     MINIMAL_CALLEE_NUM = 1
@@ -73,7 +74,7 @@ class LongMethodCollector(BaseCollector):
             testunits.update(set(callee_testsuites))
 
             for caller_location in caller_locations:
-                caller = caller_location
+                caller = copy.deepcopy(caller_location)
                 caller['call_code'] = caller['source']
                 caller['source'] = caller_method_definition['source']
                 caller['position'] = {"module_path": method_key[0], "class_name": method_key[1], "method_name": method_key[2]}
