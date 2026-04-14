@@ -41,10 +41,19 @@ GENERAL_DIMENSIONS = """### General Evaluation Dimensions (score each 0-10)
 # ---------------------------------------------------------------------------
 
 DIFFICULTY_GUIDANCE = {
-    "hard": (
-        "**Difficulty: Hard** (3-4 files). "
+    "easy": (
+        "**Difficulty: Easy** (1-2 files). "
+        "Expect straightforward refactoring. Penalize heavily for missed files."
+    ),
+    "medium": (
+        "**Difficulty: Medium** (2-3 files). "
         "Expect handling of indirect delegation and wrapper patterns. "
         "Be more lenient on edge cases."
+    ),
+    "hard": (
+        "**Difficulty: Hard** (3-4 files). "
+        "Expect handling of dynamic dispatch, red herrings, and design patterns. "
+        "Focus on whether the agent correctly distinguishes real smells from intentional patterns."
     ),
     "expert": (
         "**Difficulty: Expert** (4-5 files). "
@@ -418,7 +427,7 @@ def main():
     parser.add_argument("--gt-diff", required=True, help="Path to ground truth diff file.")
     parser.add_argument("--agent-diff", required=True, help="Path to agent diff file.")
     parser.add_argument("--original-diff", default="", help="Path to original (smelly) diff file.")
-    parser.add_argument("--difficulty", choices=["hard", "expert"], default=None,
+    parser.add_argument("--difficulty", choices=["easy", "medium", "hard"], default=None,
                         help="Difficulty level for evaluation context.")
     parser.add_argument("--cwd", default=".", help="Working directory for claude CLI call.")
     parser.add_argument("--output", "-o", default=None, help="Path to save judge result JSON.")

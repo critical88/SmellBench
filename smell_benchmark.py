@@ -28,7 +28,7 @@ from claude_cli import call_claude_cli, extract_json_from_response
 
 MAX_FIX_RETRIES = 3
 MAX_CANDIDATE_RETRIES = 3
-DIFFICULTY_LEVELS = ("hard", "expert")
+DIFFICULTY_LEVELS = ("easy", "medium")
 
 # Instruction levels for evaluation:
 # - "targeted": give smell type + precise location (file, class, method)
@@ -37,6 +37,8 @@ INSTRUCTION_LEVELS = ("targeted", "guided")
 
 # Difficulty amplifiers appended to the template for hard/expert levels
 DIFFICULTY_AMPLIFIERS = {
+    "easy": "",
+    "medium": "",
     "hard": """### 🔥 Difficulty Amplifiers (REQUIRED)
 
 1. **Camouflage**: The smell must look like an intentional design pattern (e.g., Strategy, Observer, Decorator, Adapter) — not an obvious mistake or code rot.
@@ -173,8 +175,8 @@ Do NOT run any tests yourself — testing is handled externally.
 After making your fixes, output the same JSON format as before:
 ```json
 {{
-  "hint_targeted": "Provide precise location and smell type",
-  "hint_guided": "Provide only related file paths and smell type",
+  "hint_targeted": "Natural language task: tell agent to find and refactor the smell. Include smell type + file + class/method. No fixed format.",
+  "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include smell type + primary class/method + related files. No fixed format.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [["<absolute_file_path>", "<class name or null>", "<function_name>"]]
 }}
@@ -229,7 +231,7 @@ def render_prompt(
     smell_type: str,
     smell_desc: str,
     project_path: str,
-    difficulty: str = "hard",
+    difficulty: str = "easy",
     smell_config: Optional[Dict] = None,
     target_file: str = "",
     target_file_lines: int = 0,
@@ -436,7 +438,7 @@ def process_one_smell(
     repo_path: str,
     mapping: Dict,
     output_dir: str,
-    difficulty: str = "hard",
+    difficulty: str = "easy",
     smell_config: Optional[Dict] = None,
     target_file: str = "",
     target_file_lines: int = 0,
