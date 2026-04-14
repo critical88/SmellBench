@@ -176,7 +176,7 @@ After making your fixes, output the same JSON format as before:
 ```json
 {{
   "hint_targeted": "Natural language task: tell agent to find and refactor the smell. Include smell type + file + class/method. No fixed format.",
-  "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include smell type + primary class/method + related files. No fixed format.",
+  "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include ONLY smell type + related file paths. Do NOT reveal class/method names. No fixed format.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [["<absolute_file_path>", "<class name or null>", "<function_name>"]]
 }}
