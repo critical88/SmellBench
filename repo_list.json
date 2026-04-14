@@ -2,6 +2,7 @@
     "click": {
         "url": "https://github.com/pallets/click.git",
         "commit_id": "1d038f270701498433cb432f54db89f95f07a845",
+        "src_path": "src/click",
         "selected": true,
         "conda_env_create": "conda create -n click-dev python==3.10 pytest pytest-cov",
         "build_cmd": "pip install -e \".[dev]\"",
@@ -64,6 +65,7 @@
         "url": "https://github.com/sympy/sympy",
         "commit_id": "16fa855354eb7bcabd3fe10993841e03b1382692",
         "src_path": "sympy",
+        "selected": true,
         "conda_env_create": "conda create -n sympy-dev python==3.12 pytest pytest-cov hypothesis",
         "env_name": "sympy-dev"
     },
@@ -71,6 +73,7 @@
         "url": "https://github.com/scikit-learn/scikit-learn",
         "commit_id": "d3898d9d57aeb1e960d266613a2e31b07bca39d7",
         "src_path": "sklearn",
+        "selected": true,
         "conda_env_create": "conda create -n sklearn-dev -c conda-forge python==3.12 numpy scipy cython meson-python ninja pytest pytest-cov ruff==0.12.2 mypy numpydoc joblib threadpoolctl compilers llvm-openmp pre-commit ",
         "build_cmd": "pip install --editable . --verbose --no-build-isolation --config-settings editable-verbose=true",
         "env_name": "sklearn-dev"
@@ -79,6 +82,7 @@
         "url": "https://github.com/matplotlib/matplotlib",
         "commit_id": "1392cbe3c79cdb93f9282747841d648770f60249",
         "src_path": "lib/matplotlib",
+        "selected": true,
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": [
                         "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
@@ -92,6 +96,29 @@
         "conda_env_create": "conda create -n xarray-dev python==3.10 h5py",
         "build_cmd": "pip install -e \".[dev]\"",
         "env_name": "xarray-dev",
+        "selected": true,
         "test_cmd" : "--ignore=xarray/tests/test_distributed.py"
+    },
+    "gson": {
+        "url": "https://github.com/google/gson.git",
+        "commit_id": "53d703ee76ca3e951fa4a727307c1f28dbcaf3aa",
+        "src_path": "gson/src/main/java",
+        "test_path": "gson/src/test/java",
+        "language": "java",
+        "build_tool": "maven",
+        "build_cmd": "mvn compile -DskipTests -pl gson",
+        "test_cmd": "mvn test -pl gson",
+        "package_prefix": "com.google.gson"
+    },
+    "commons-io": {
+        "url": "https://github.com/apache/commons-io.git",
+        "commit_id": "01de46e5b7792be6b7e7a6f11f9d034248a6b9f4",
+        "src_path": "src/main/java",
+        "test_path": "src/test/java",
+        "language": "java",
+        "build_tool": "maven",
+        "build_cmd": "mvn compile -DskipTests",
+        "test_cmd": "mvn test",
+        "package_prefix": "org.apache.commons.io"
     }
 }

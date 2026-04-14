@@ -12,71 +12,156 @@ def reset_repository(repo_path, commit_hash=None):
     try:
         commit_hash = 'HEAD' if commit_hash is None else commit_hash
         subprocess.run(['git', 'reset', '--hard', commit_hash], cwd=repo_path, check=True)
-        # subprocess.run(['git', 'clean', '-fd'], cwd=repo_path, check=True)
         return True
     except subprocess.CalledProcessError:
         print(f"Error resetting repository at {repo_path}")
         return False
 
 
+# ---------------------------------------------------------------------------
+# Java (Maven) helpers
+# ---------------------------------------------------------------------------
 
-def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
-    spec = get_spec(project_name)
-    """Run the project's test suite"""
+def _build_mvn_test_cmd(test_file_paths, test_cmd=""):
+    """Build a Maven test command from test file paths.
+
+    test_file_paths can be:
+      - test class simple names: ["FileUtilsTest", "IOCaseTest"]
+      - test class FQNs: ["org.apache.commons.io.FileUtilsTest"]
+      - test class + method: ["FileUtilsTest#testCopy"]
+    """
+    cmd = ["mvn", "test"]
+
+    if test_file_paths:
+        test_pattern = ",".join(test_file_paths)
+        cmd.append(f"-Dtest={test_pattern}")
+
+    cmd.append("-DfailIfNoTests=false")
+    cmd.append("-Dmaven.test.failure.ignore=false")
+    cmd.append("-pl")
+    cmd.append(".")
+
+    if test_cmd:
+        cmd.extend(test_cmd.split())
+
+    return cmd
+
+
+def _run_java_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
+    """Run the Java project's test suite via Maven."""
     try:
-        # First try to install the project
-        # subprocess.run(['pip', 'install', '-e', '.'], cwd=project_path, check=True)
-        # Then run tests
         with pushd(project_path):
             exec_env = os.environ.copy()
             for k, v in envs.items():
                 exec_env[k] = v
-            # batch_size = 300
-            # i = 0
-            # test_len = len(test_file_paths)
-            # if test_len > 300:
-            #     ## run all test 
-            #     return None, None
-            # while(i >= 0 and batch_size * i < test_len):
-            # cmd = []
-            # if test_cmd:
-            #     cmd.extend(shlex.split(test_cmd, posix=True))
-            
-            # cmd.extend(test_file_paths[batch_size * i: batch_size * (i+1)])
-            # i += 1
-            cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
-            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True, timeout=timeout)
-            # result = subprocess.run(cmd, cwd='.', capture_output=True, text=True, env=env)
+
+            cmd = _build_mvn_test_cmd(test_file_paths, test_cmd=test_cmd)
+            _log(f"Running: {' '.join(cmd)}", DEBUG_LOG_LEVEL)
+
+            result = subprocess.run(
+                cmd,
+                cwd=".",
+                capture_output=True,
+                text=True,
+                env=exec_env,
+                timeout=timeout,
+            )
             if result.returncode != 0:
-                return False, result.stdout
-                
+                return False, result.stdout + "\n" + result.stderr
+
             return True, result.stdout
 
-            # test_func = [] if len(test_file_paths) > 100 else test_file_paths
-            # if ignore_test:
-            #     test_func.extend([f'--ignore={p}' for p in ignore_test])
-            # result = subprocess.run(['pytest','-x'] + test_func, cwd='.', capture_output=True, text=True, env=env)
+    except subprocess.TimeoutExpired:
+        print(f"Test execution timed out after {timeout}s")
+        return False, f"Timeout after {timeout}s"
+    except Exception as e:
+        print(f"Error running tests: {e}")
+        return False, str(e)
+
+
+# ---------------------------------------------------------------------------
+# Python (pytest / conda) helpers
+# ---------------------------------------------------------------------------
+
+def _run_python_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
+    """Run the Python project's test suite via pytest + conda."""
+    spec = get_spec(project_name)
+    try:
+        with pushd(project_path):
+            exec_env = os.environ.copy()
+            for k, v in envs.items():
+                exec_env[k] = v
+
+            cmd = create_test_command(test_file_paths, test_cmd=test_cmd)
+            result = conda_exec_cmd(cmd, spec=spec, cwd=".", envs=exec_env, capture_output=True, timeout=timeout)
+            if result.returncode != 0:
+                return False, result.stdout
+
+            return True, result.stdout
+
         return result.returncode == 0, result.stdout
     except Exception as e:
         print(f"Error running tests: {e}")
         return False, str(e)
 
-def replace_and_test_caller(project_name:str, src_path:str, testsuites, smell_content=None, test_cmd="", envs={}, project_dir="../project", commit_hash=None, verbose=False):
-    # Define paths
+
+# ---------------------------------------------------------------------------
+# Unified entry points
+# ---------------------------------------------------------------------------
+
+def _is_java_project(project_name):
+    """Check if a project is a Java project based on repo_list.json spec."""
+    spec = get_spec(project_name)
+    if spec is None:
+        return False
+    return spec.get("language", "").lower() == "java"
+
+
+def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
+    """Run tests — dispatches to Maven or pytest based on project language."""
+    if _is_java_project(project_name):
+        return _run_java_tests(project_name, project_path, test_file_paths,
+                               envs=envs, test_cmd=test_cmd, timeout=timeout)
+    else:
+        return _run_python_tests(project_name, project_path, test_file_paths,
+                                 envs=envs, test_cmd=test_cmd, timeout=timeout)
+
+
+def replace_and_test_caller(
+    project_name: str,
+    src_path: str,
+    testsuites,
+    smell_content=None,
+    test_cmd="",
+    envs={},
+    project_dir="../project",
+    commit_hash=None,
+    verbose=False,
+):
+    """Apply a diff to a project and run the mapped tests.
+
+    Works for both Python and Java projects — test execution is dispatched
+    based on the project's language field in repo_list.json.
+
+    1. Reset repository to commit_hash
+    2. Apply smell_content as a git diff
+    3. Run the specified tests
+    4. Reset repository back (in finally)
+    """
     base_project_path = project_dir
-    module_path = os.path.normpath(src_path).split(os.sep)[-1]
     project_path = os.path.join(base_project_path, project_name)
-    # Check if paths exist
+
     if not os.path.exists(project_path):
         print(f"Project directory not found for {project_name}")
         return False
 
-    # Reset repository
     if not reset_repository(project_path, commit_hash):
         print(f"Project reset failed")
         return False
+
     try:
         test_file_paths = testsuites
+
         if smell_content is not None:
             uuid_str = str(uuid.uuid4())
             try:
@@ -91,11 +176,19 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, smell_co
             finally:
                 if os.path.exists(diff_file):
                     os.remove(diff_file)
-        # Run tests
-        success, output = run_project_tests(project_name, project_path, test_file_paths, envs=envs, test_cmd=test_cmd, timeout=20)
-    
+
+        # Dispatch timeout: Java projects need more time for Maven
+        default_timeout = 120 if _is_java_project(project_name) else 20
+        success, output = run_project_tests(
+            project_name,
+            project_path,
+            test_file_paths,
+            envs=envs,
+            test_cmd=test_cmd,
+            timeout=default_timeout,
+        )
+
         if success:
-            # print(f"Tests passed for {project_name}")
             _log(f"Tests passed for {project_name}")
             return True
         else:
@@ -104,30 +197,3 @@ def replace_and_test_caller(project_name:str, src_path:str, testsuites, smell_co
             return False
     finally:
         reset_repository(project_path, commit_hash)
-
-
-
-# def main(args):
-#     project_name = args.project_name
-#     # List of projects to process
-#     projects = [project_name]  # Add more projects as needed
-    
-#     results = {}
-#     for project in projects:
-#         print(f"\nProcessing {project}...")
-#         results[project] = process_refactoring(project)
-    
-#     # Print summary
-#     print("\nSummary:")
-#     for project, success in results.items():
-#         status = "Finished" if success else "Failed"
-#         print(f"{project}: {status}")
-
-# def parse_args() -> argparse.Namespace:
-#     parser = argparse.ArgumentParser(description="Evaluate LLM refactor ability against reference data.")
-#     parser.add_argument("--project-name", default="click", help="Project name")
-#     return parser.parse_args()
-
-# if __name__ == '__main__':
-#     args = parse_args()
-#     main(args)
