@@ -8,10 +8,11 @@ from tqdm import tqdm
 import uuid
 
 def reset_repository(repo_path, commit_hash=None):
-    """Reset the git repository to its latest state"""
+    """Reset the git repository to a clean state at the given commit."""
     try:
         commit_hash = 'HEAD' if commit_hash is None else commit_hash
         subprocess.run(['git', 'reset', '--hard', commit_hash], cwd=repo_path, check=True)
+        subprocess.run(['git', 'clean', '-fd'], cwd=repo_path, check=True)
         return True
     except subprocess.CalledProcessError:
         print(f"Error resetting repository at {repo_path}")

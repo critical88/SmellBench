@@ -204,6 +204,7 @@ def install_repo(spec, project_path="../project"):
         print(f"{repo_name} already installed")
         return True
     cwd = os.path.join(project_path, repo_name)
+    _run_git_command(["reset", "--hard"], cwd=cwd)
     process = _run_git_command(["checkout", spec['commit_id']], cwd=cwd)
     if process.returncode == 0:
         print(f"checkout {repo_name} success")
