@@ -1,17 +1,19 @@
 """
 Claude CLI Helpers
 ==================
-Shared utilities for calling the Claude CLI and parsing responses.
+Shared utilities for calling the Claude CLI, the Anthropic API, and parsing responses.
 Extracted to avoid circular imports between smell_benchmark and find_candidates.
 """
 
 import json
+import os
 import re
 import shlex
 import shutil
 import subprocess
 import time
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 
 CLAUDE_CMD_TEMPLATE = "claude -p --verbose --output-format stream-json"
@@ -198,3 +200,67 @@ def extract_json_from_response(response_text: str) -> Optional[Dict]:
         last_brace = response_text.rfind("{", 0, last_brace)
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Anthropic API helpers
+# ---------------------------------------------------------------------------
+
+def _load_env_file() -> None:
+    """Load .env file from the same directory as this script, without overriding existing env vars."""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key not in os.environ:
+            os.environ[key] = value
+
+
+def call_llm(
+    prompt: str,
+    model: str = "claude-sonnet-4-5-20250929",
+    max_tokens: int = 4096,
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Call the Anthropic API directly.
+
+    Loads ANTHROPIC_API_KEY from environment first, falls back to .env file.
+
+    Returns:
+        Dict with keys: "parsed" (the parsed JSON result or None),
+        "raw" (raw response text), "usage" (token usage dict).
+    """
+    import anthropic
+
+    _load_env_file()
+    kwargs: Dict[str, Any] = {}
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    effective_base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
+    if api_key:
+        kwargs["api_key"] = api_key
+    if effective_base_url:
+        kwargs["base_url"] = effective_base_url
+    client = anthropic.Anthropic(**kwargs)
+    start_ms = time.time() * 1000
+    message = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    duration_ms = int(time.time() * 1000 - start_ms)
+    raw_text = message.content[0].text
+    usage = {
+        "input_tokens": message.usage.input_tokens,
+        "output_tokens": message.usage.output_tokens,
+        "duration_ms": duration_ms,
+    }
+    parsed = extract_json_from_response(raw_text)
+    return {"parsed": parsed, "raw": raw_text, "usage": usage}

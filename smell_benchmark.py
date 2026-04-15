@@ -19,7 +19,7 @@ import uuid
 from testunits import reset_repository, run_project_tests
 from utils import _run_git_command, get_spec, hashcode, prepare_to_run
 from find_candidates import process_repo as generate_candidates
-from claude_cli import call_claude_cli, extract_json_from_response
+from claude_cli import call_claude_cli, call_llm, extract_json_from_response
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,106 @@ DIFFICULTY_AMPLIFIERS = {
 5. **Multi-step resolution**: Fixing the smell must require coordinated, order-dependent changes in 4+ locations. Partial fixes must leave the code in a worse state than the smell itself.
 6. **Indirect coupling**: Use at least two layers of indirection (e.g., registry + callback, config + dynamic import, decorator + shared state) to hide the real dependency chain from static analysis.""",
 }
+
+
+# ---------------------------------------------------------------------------
+# Smell analysis prompt template (Step 1: analyze smell diff)
+# ---------------------------------------------------------------------------
+
+SMELL_ANALYSIS_PROMPT = """You are an expert software engineer analyzing a code change (diff) that introduces a "{smell_type}" code smell into a codebase.
+
+## Smell Type
+- **Name**: {smell_type}
+- **Description**: {smell_description}
+
+## The Smell Diff
+This diff was applied to a clean codebase to introduce the smell:
+```diff
+{smell_diff}
+```
+
+## Your Task
+Analyze this diff by going through each change and assessing its significance. Focus on **what each change means and how important it is**, NOT on how to fix it.
+
+For each distinct change in the diff (a new function, a moved block, an added import, etc.), explain:
+- **What it does**
+- **How significant it is** (critical / moderate / minor) to the smell
+- **What it degrades** in the codebase (e.g., coupling, cohesion, readability, API surface, etc.)
+
+After covering individual changes, provide:
+
+1. **Overall smell pattern**: Summarize how these changes work together to create the "{smell_type}" smell. What design principle is violated?
+2. **Severity ranking**: Rank the changes from most to least important. Which changes are the **root cause** of the smell, and which are just supporting noise?
+3. **What was degraded overall**: What concrete qualities of the codebase were harmed? Be specific about the impact on maintainability, coupling, cohesion, etc.
+4. **Key evaluation signals**: When judging whether a candidate fix truly addresses this smell, what should matter most? What would distinguish a thorough fix from a superficial one?
+
+## Output Format
+
+Return your result as JSON:
+```json
+{{
+  "analysis": "<your full analysis text as described above>",
+  "custom_rubrics": [
+    {{
+      "name": "<short criterion name, e.g. 'Core Smell Resolution'>",
+      "description": "<what this criterion evaluates, tied to the specific smell instance>",
+      "excellent": "<9-10: what an excellent result looks like>",
+      "good": "<7-8: what a good result looks like>",
+      "acceptable": "<5-6: what an acceptable result looks like>",
+      "below_average": "<3-4: what a below-average result looks like>",
+      "poor": "<0-2: what a poor result looks like>"
+    }}
+  ]
+}}
+```
+
+The two `custom_rubrics` should capture the most important evaluation dimensions **specific to this particular smell instance** — things that the generic rubric would miss. They will be added as extra scoring criteria when evaluating candidate fixes. Make them concrete and tied to the actual function/class names in the diff.
+
+Each rubric MUST include all 5 scoring levels: `excellent` (9-10), `good` (7-8), `acceptable` (5-6), `below_average` (3-4), `poor` (0-2). Each level should clearly describe what a result at that score range looks like, with concrete references to the code in the diff."""
+
+
+def generate_smell_analysis(
+    smell_type: str,
+    smell_content: str,
+    smell_description: str = "",
+    model: str = "claude-sonnet-4-5-20250929",
+    base_url: Optional[str] = None,
+) -> Tuple[Optional[str], List[Dict], Dict]:
+    """Generate smell analysis and custom rubrics for a case via LLM.
+
+    Returns:
+        (smell_analysis, custom_rubrics, usage)
+    """
+    prompt = SMELL_ANALYSIS_PROMPT.format(
+        smell_type=smell_type,
+        smell_description=smell_description,
+        smell_diff=smell_content,
+    )
+    result = call_llm(prompt, model=model, base_url=base_url)
+    usage = result.get("usage", {})
+    parsed = result.get("parsed")
+
+    if parsed:
+        smell_analysis = parsed.get("analysis", result.get("raw", ""))
+        custom_rubrics = parsed.get("custom_rubrics", [])
+        print(f"  Smell analysis generated ({len(smell_analysis)} chars), "
+              f"{len(custom_rubrics)} custom rubrics")
+    else:
+        smell_analysis = result.get("raw", "")
+        custom_rubrics = []
+        print(f"  Smell analysis generated ({len(smell_analysis)} chars, no structured rubrics)")
+
+    return smell_analysis, custom_rubrics, usage
+
+
+def _accumulate_usage(target: Dict, source: Dict) -> None:
+    """Accumulate token usage from source into target dict."""
+    for k in ("input_tokens", "output_tokens", "cache_creation_tokens",
+              "cache_read_tokens", "duration_ms"):
+        if k in source:
+            target[k] = target.get(k, 0) + source[k]
+    if "total_cost_usd" in source:
+        target["total_cost_usd"] = target.get("total_cost_usd", 0.0) + source["total_cost_usd"]
 
 
 def print_usage_summary(usage_records: List[Dict]):
@@ -444,6 +544,8 @@ def process_one_smell(
     target_file_lines: int = 0,
     assignment_key: str = "",
     candidate: Optional[Dict] = None,
+    model: str = "claude-sonnet-4-5-20250929",
+    base_url: Optional[str] = None,
 ) -> Optional[Dict]:
     """Process a single (repo, smell_type) combination.
 
@@ -642,6 +744,19 @@ def process_one_smell(
         "usage": total_usage,
     }
 
+    # Generate smell analysis + custom rubrics via LLM
+    print(f"  Generating smell analysis for {instance_id} ...")
+    analysis, rubrics, analysis_usage = generate_smell_analysis(
+        smell_type=smell_type,
+        smell_content=smell_content,
+        smell_description=smell_desc,
+        model=model,
+        base_url=base_url,
+    )
+    result["smell_analysis"] = analysis
+    result["custom_rubrics"] = rubrics
+    _accumulate_usage(total_usage, analysis_usage)
+
     # Write this case immediately to its own directory
     result_path = os.path.join(smell_dir, "result.json")
     with open(result_path, "w", encoding="utf-8") as f:
@@ -691,15 +806,24 @@ def main(args):
             existing_entries = []
 
     # Build set of completed (repo, smell_type, difficulty) triples
-    completed_triples = set()
-    for entry in existing_entries:
+    # and index existing entries for quick lookup
+    completed_triples = set()       # fully done (has analysis)
+    needs_analysis_triples = set()  # case exists but missing smell_analysis
+    existing_entry_index: Dict[tuple, int] = {}  # triple -> index in existing_entries
+    for idx, entry in enumerate(existing_entries):
         key = (entry.get("project_name", ""),
                entry.get("type", ""),
                entry.get("difficulty", ""))
-        completed_triples.add(key)
+        existing_entry_index[key] = idx
+        if entry.get("smell_analysis") and entry.get("custom_rubrics"):
+            completed_triples.add(key)
+        else:
+            needs_analysis_triples.add(key)
 
     if completed_triples:
         print(f"Loaded {len(completed_triples)} completed cases from {smell_codes_path}")
+    if needs_analysis_triples:
+        print(f"Found {len(needs_analysis_triples)} cases needing smell analysis")
 
     all_results = list(existing_entries)  # start from existing data
 
@@ -768,30 +892,70 @@ def main(args):
             print(f"  Loaded candidates from {candidates_path}")
 
         # Build list of (smell, difficulty) pairs that still need processing
-        # Note: instruction_level (targeted/guided) is an evaluation-time concern.
-        # The injection pipeline produces one smell per (smell_type, difficulty)
-        # and outputs both hint_targeted and hint_guided for later use.
+        # - "generate": no case exists, need full generation
+        # - "analysis_only": case exists but missing smell_analysis/custom_rubrics
         pending_tasks = []
         for smell in smell_types:
             for difficulty in DIFFICULTY_LEVELS:
                 smell_type = smell["type"]
-                if (repo_name, smell_type, difficulty) in completed_triples:
+                triple = (repo_name, smell_type, difficulty)
+                if triple in completed_triples:
                     continue
-                pending_tasks.append((smell, difficulty))
+                if triple in needs_analysis_triples:
+                    pending_tasks.append((smell, difficulty, "analysis_only"))
+                else:
+                    pending_tasks.append((smell, difficulty, "generate"))
 
         total_tasks = len(smell_types) * len(DIFFICULTY_LEVELS)
         completed_count = total_tasks - len(pending_tasks)
+        gen_count = sum(1 for _, _, m in pending_tasks if m == "generate")
+        ana_count = sum(1 for _, _, m in pending_tasks if m == "analysis_only")
         print(f"  {len(pending_tasks)} tasks pending "
               f"({completed_count} already completed, "
-              f"{len(smell_types)} smell types x {len(DIFFICULTY_LEVELS)} levels)")
+              f"{gen_count} to generate, {ana_count} need analysis only)")
 
         if not pending_tasks:
             print(f"  All smell type x difficulty combinations already completed for {repo_name}, skipping")
             continue
 
-        for task_idx, (smell, difficulty) in enumerate(pending_tasks):
+        for task_idx, (smell, difficulty, mode) in enumerate(pending_tasks):
             smell_type = smell["type"]
             smell_desc = smell.get("desc", "")
+
+            # --- analysis_only: existing case just needs smell analysis ---
+            if mode == "analysis_only":
+                triple = (repo_name, smell_type, difficulty)
+                entry_idx = existing_entry_index[triple]
+                entry = existing_entries[entry_idx]
+                print(f"\n--- [{task_idx+1}/{len(pending_tasks)}] "
+                      f"{smell_type} ({difficulty}) -> generating analysis only ---")
+                analysis, rubrics, analysis_usage = generate_smell_analysis(
+                    smell_type=smell_type,
+                    smell_content=entry["smell_content"],
+                    smell_description=smell_desc,
+                    model=args.model,
+                    base_url=args.base_url,
+                )
+                entry["smell_analysis"] = analysis
+                entry["custom_rubrics"] = rubrics
+                entry_usage = entry.get("usage", {})
+                _accumulate_usage(entry_usage, analysis_usage)
+                entry["usage"] = entry_usage
+                # Update the corresponding entry in all_results too
+                for i, r in enumerate(all_results):
+                    if r.get("instance_id") == entry.get("instance_id"):
+                        all_results[i] = entry
+                        break
+                usage_records.append({
+                    "smell_type": smell_type,
+                    "difficulty": difficulty,
+                    "usage": analysis_usage,
+                })
+                # Save immediately
+                with open(smell_codes_path, "w", encoding="utf-8") as f:
+                    json.dump(all_results, f, indent=2, ensure_ascii=False)
+                print(f"  Analysis generated for {entry.get('instance_id', '?')}")
+                continue
 
             # Pick a random candidate for this smell type, retry with different candidates on failure
             smell_candidates = candidates_data.get(smell_type, [])
@@ -838,6 +1002,8 @@ def main(args):
                     target_file=target_file,
                     assignment_key=akey,
                     candidate=candidate,
+                    model=args.model,
+                    base_url=args.base_url,
                 )
 
                 if result:
@@ -876,6 +1042,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default=None, help="Process a single repo instead of all selected.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists.")
+    parser.add_argument("--model", default="claude-sonnet-4-5-20250929",
+                        help="Model for smell analysis LLM calls (default: claude-sonnet-4-5-20250929).")
+    parser.add_argument("--base-url", default=None,
+                        help="Base URL for Anthropic API (overrides ANTHROPIC_BASE_URL env var).")
     return parser.parse_args()
 
 
