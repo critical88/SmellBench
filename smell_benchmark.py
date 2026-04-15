@@ -804,7 +804,13 @@ def main(args):
     # Load config files
     with open("smell_type.json", "r", encoding="utf-8") as f:
         smell_types = json.load(f)
-    smell_types = smell_types[:1]
+
+    if args.test:
+        smell_types = smell_types[:1]
+        difficulty_levels = ("medium",)
+        print("[TEST MODE] Using first smell type only, difficulty=medium")
+    else:
+        difficulty_levels = DIFFICULTY_LEVELS
 
     with open("repo_list.json", "r", encoding="utf-8") as f:
         repo_list = json.load(f)
@@ -953,7 +959,7 @@ def main(args):
         # - "analysis_only": case exists but missing smell_analysis/custom_rubrics
         pending_tasks = []
         for smell in smell_types:
-            for difficulty in DIFFICULTY_LEVELS:
+            for difficulty in difficulty_levels:
                 smell_type = smell["type"]
                 pair = (smell_type, difficulty)
                 if pair in completed_pairs:
@@ -963,7 +969,7 @@ def main(args):
                 else:
                     pending_tasks.append((smell, difficulty, "generate"))
 
-        total_tasks = len(smell_types) * len(DIFFICULTY_LEVELS)
+        total_tasks = len(smell_types) * len(difficulty_levels)
         completed_count = total_tasks - len(pending_tasks)
         gen_count = sum(1 for _, _, m in pending_tasks if m == "generate")
         ana_count = sum(1 for _, _, m in pending_tasks if m == "analysis_only")
@@ -1105,6 +1111,8 @@ def parse_args() -> argparse.Namespace:
                              f"(choices: {', '.join(SUPPORTED_AGENTS)}).")
     parser.add_argument("--base-url", default=None,
                         help="Base URL for Anthropic API (overrides ANTHROPIC_BASE_URL env var).")
+    parser.add_argument("--test", action="store_true",
+                        help="Test mode: only first smell type, difficulty=medium.")
     return parser.parse_args()
 
 
