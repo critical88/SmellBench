@@ -224,23 +224,26 @@ def _load_env_file() -> None:
             os.environ[key] = value
 
 
-def call_llm(
-    prompt: str,
-    model: str = "claude-sonnet-4-5-20250929",
-    max_tokens: int = 4096,
-    base_url: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Call the Anthropic API directly.
+def _parse_model_spec(model: str) -> Tuple[str, str]:
+    """Parse a 'provider/model-name' string into (provider, model_name).
 
-    Loads ANTHROPIC_API_KEY from environment first, falls back to .env file.
-
-    Returns:
-        Dict with keys: "parsed" (the parsed JSON result or None),
-        "raw" (raw response text), "usage" (token usage dict).
+    If no '/' is present, defaults to 'anthropic' provider for backward compatibility.
     """
+    if "/" in model:
+        provider, model_name = model.split("/", 1)
+        return provider.lower(), model_name
+    return "anthropic", model
+
+
+def _call_anthropic(
+    prompt: str,
+    model: str,
+    max_tokens: int,
+    base_url: Optional[str],
+) -> Dict[str, Any]:
+    """Call the Anthropic API."""
     import anthropic
 
-    _load_env_file()
     kwargs: Dict[str, Any] = {}
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     effective_base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
@@ -264,3 +267,64 @@ def call_llm(
     }
     parsed = extract_json_from_response(raw_text)
     return {"parsed": parsed, "raw": raw_text, "usage": usage}
+
+
+def _call_openai(
+    prompt: str,
+    model: str,
+    max_tokens: int,
+    base_url: Optional[str],
+) -> Dict[str, Any]:
+    """Call an OpenAI-compatible API."""
+    import openai
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    effective_base_url = base_url or os.environ.get("OPENAI_BASE_URL")
+    kwargs: Dict[str, Any] = {}
+    if api_key:
+        kwargs["api_key"] = api_key
+    if effective_base_url:
+        kwargs["base_url"] = effective_base_url
+    client = openai.OpenAI(**kwargs)
+    start_ms = time.time() * 1000
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    duration_ms = int(time.time() * 1000 - start_ms)
+    raw_text = response.choices[0].message.content or ""
+    usage_data = response.usage
+    usage = {
+        "input_tokens": usage_data.prompt_tokens if usage_data else 0,
+        "output_tokens": usage_data.completion_tokens if usage_data else 0,
+        "duration_ms": duration_ms,
+    }
+    parsed = extract_json_from_response(raw_text)
+    return {"parsed": parsed, "raw": raw_text, "usage": usage}
+
+
+def call_llm(
+    prompt: str,
+    model: str = "anthropic/claude-sonnet-4-5-20250929",
+    max_tokens: int = 4096,
+    base_url: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Call an LLM API. Model format: 'provider/model-name'.
+
+    Supported providers: anthropic, openai.
+    If no provider prefix, defaults to anthropic for backward compatibility.
+
+    Returns:
+        Dict with keys: "parsed" (the parsed JSON result or None),
+        "raw" (raw response text), "usage" (token usage dict).
+    """
+    _load_env_file()
+    provider, model_name = _parse_model_spec(model)
+
+    if provider == "anthropic":
+        return _call_anthropic(prompt, model_name, max_tokens, base_url)
+    elif provider == "openai":
+        return _call_openai(prompt, model_name, max_tokens, base_url)
+    else:
+        raise ValueError(f"Unsupported provider: '{provider}'. Use 'anthropic/...' or 'openai/...'")

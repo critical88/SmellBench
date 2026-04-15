@@ -1,7 +1,7 @@
 from hashlib import md5
 import os
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from openai import OpenAI
 from dataclasses import dataclass
 import json
@@ -22,11 +22,27 @@ class LLMResponse:
     content: str
     model: str
     raw_response: Any = None
+    trajectory: List = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
     cache_tokens: int = 0
     total_tokens: int = 0
     duration: float = 0.0 ## unit: second
+
+    def __post_init__(self):
+        if self.trajectory is None:
+            self.trajectory = []
+
+    @property
+    def usage(self) -> dict:
+        """Return a unified usage dict."""
+        return {
+            "input_tokens": self.prompt_tokens,
+            "output_tokens": self.completion_tokens,
+            "cache_creation_tokens": self.cache_tokens,
+            "cache_read_tokens": self.cache_tokens,
+            "duration_ms": int(self.duration * 1000),
+        }
 
 @dataclass
 class AgentResponse(LLMResponse):
@@ -34,6 +50,24 @@ class AgentResponse(LLMResponse):
     tool_call_success: int = 0
     num_turns: int = 0
     api_duration: float = 0.0 ## unit:second
+    total_cost_usd: float = 0.0
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+
+    @property
+    def usage(self) -> dict:
+        """Return a unified usage dict."""
+        return {
+            "input_tokens": self.prompt_tokens,
+            "output_tokens": self.completion_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "total_cost_usd": self.total_cost_usd,
+            "duration_ms": int(self.duration * 1000),
+            "num_turns": self.num_turns,
+            "tool_calls": self.tool_calls,
+            "tool_call_success": self.tool_call_success,
+        }
 class Client(ABC):
 
     def __init__(self):
@@ -318,68 +352,194 @@ class QwenCodeClient(CommandAgentClient):
 
 
 class ClaudeCodeClient(CommandAgentClient):
+    TIMEOUT = 1200  # 20 minutes, matching claude_cli.py
+
     def __init__(self, model=None, api_key=None, base_url=None):
         super().__init__()
         self.model = model or os.getenv("CLAUDE_CODE_MODEL")
-        self.api_key = api_key or os.getenv("CLAUDE_CODE_API_KEY")
-        self.base_url = base_url or os.getenv("CLAUDE_CODE_BASE_URL")
         self.input_in_command = False
 
     def _agent_command(self, model=None):
-        cmd = "claude -p --model {model} --openai-api-key {api_key} --openai-base-url {base_url} --approval-mode yolo --output-format stream-json"
         model = model or self.model
-        cmd = cmd.format(model=model, api_key=self.api_key, base_url=self.base_url)
+        cmd = "claude -p --verbose --output-format stream-json"
+        if model:
+            cmd += f" --model {model}"
         return cmd
-    
+
+    def send_request(self, prompt, model=None, cwd=None):
+        """Override to use subprocess.Popen for streaming, matching claude_cli.py."""
+        import time
+
+        envs = os.environ.copy()
+        command = shlex.split(self._agent_command(model), posix=True)
+        agent_cmd = shutil.which(command[0])
+        if agent_cmd is None:
+            raise RuntimeError("claude CLI not found in PATH")
+        command[0] = agent_cmd.replace("/", os.sep)
+
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=envs,
+        )
+
+        process.stdin.write(prompt)
+        process.stdin.close()
+
+        lines = []
+        start_time = time.time()
+
+        while True:
+            if time.time() - start_time > self.TIMEOUT:
+                process.kill()
+                raise RuntimeError(f"claude CLI timed out after {self.TIMEOUT}s")
+
+            line = process.stdout.readline()
+            if not line:
+                if process.poll() is not None:
+                    break
+                continue
+
+            line = line.strip()
+            if not line:
+                continue
+
+            lines.append(line)
+
+            # Real-time progress printing
+            try:
+                event = json.loads(line)
+                self._print_event(event)
+            except json.JSONDecodeError:
+                pass
+
+        returncode = process.wait()
+        stderr = process.stderr.read()
+
+        if returncode != 0:
+            raise RuntimeError(
+                f"claude CLI failed with code {returncode}: {stderr[:500]}"
+            )
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _print_event(event: dict):
+        """Print condensed human-readable event information in real-time."""
+        event_type = event.get("type", "")
+        message = event.get("message", {})
+
+        if event_type in ("assistant", "message"):
+            content_array = message.get("content", event.get("content", []))
+            if isinstance(content_array, list):
+                for item in content_array:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type", "")
+                    if item_type == "text":
+                        text = item.get("text", "")
+                        if text:
+                            display = text[:200] + "..." if len(text) > 200 else text
+                            print(f"    Assistant: {display}", flush=True)
+                    elif item_type == "tool_use":
+                        tool_name = item.get("name", "")
+                        tool_input = item.get("input", {})
+                        print(f"    Tool: {tool_name}", flush=True)
+                        if isinstance(tool_input, dict):
+                            for key, value in list(tool_input.items())[:3]:
+                                if key in ("content", "new_string", "old_string"):
+                                    print(f"      {key}: ({len(str(value))} chars)", flush=True)
+                                else:
+                                    v = str(value)
+                                    print(f"      {key}: {v[:80]}{'...' if len(v) > 80 else ''}", flush=True)
+
+        elif event_type == "tool_result":
+            content_array = event.get("content", message.get("content", []))
+            if isinstance(content_array, list):
+                for item in content_array:
+                    if isinstance(item, dict):
+                        text = item.get("text", "")
+                        if text:
+                            lines = text.split("\n")
+                            print(f"    Tool Result: ({len(lines)} lines)", flush=True)
+                            break
+
+        elif event_type == "result":
+            usage = event.get("usage", {})
+            print(f"    Final Result: ({len(event.get('result', ''))} chars)", flush=True)
+            if usage:
+                print(
+                    f"      Tokens: in={usage.get('input_tokens', 0)}, "
+                    f"out={usage.get('output_tokens', 0)}, "
+                    f"cost=${event.get('total_cost_usd', 0):.4f}",
+                    flush=True,
+                )
+
+        elif event_type == "error":
+            print(f"    Error: {event.get('message', message.get('message', ''))}", flush=True)
+
     def _tackle_output_to_response(self, model, output_text)->AgentResponse:
         content = ""
-        response = None
+        trajectory = []
         prompt_tokens = 0
         completion_tokens = 0
-        total_tokens = 0
-        cache_tokens = 0
+        cache_creation_tokens = 0
+        cache_read_tokens = 0
+        total_cost_usd = 0.0
         tool_calls = 0
         tool_call_success = 0
         duration = 0
-        api_duration= 0 
+        api_duration = 0
         num_turns = 0
         if output_text:
-            response = output_text
-            output_stream_text_list = output_text.split("\n")
-            for o in output_stream_text_list:
-                if not o:
+            for line in output_text.split("\n"):
+                if not line:
                     continue
-                o = json.loads(o)
-                if 'message' in o and o['message']['content']:
-                    tool_content = o['message']['content'][0]
-                    if tool_content['type'] == 'tool_result':
-                        tool_calls +=1
-                        if not tool_content['is_error']:
-                            tool_call_success += 1 
-                elif o['type'] == 'result':
-                    content = o['result']
-                    prompt_tokens = o['usage']['input_tokens']
-                    completion_tokens = o['usage']['output_tokens']
-                    total_tokens = o['usage'].get('total_tokens', 0)
-                    cache_tokens = o['usage'].get('cache_read_input_tokens', 0)
-                    duration = o['duration_ms'] / 1000
-                    num_turns = o['num_turns']
-                    api_duration = o['duration_api_ms'] / 1000
-        
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                trajectory.append(event)
+                if event.get("type") == "result":
+                    content = event.get("result", "")
+                    usage = event.get("usage", {})
+                    prompt_tokens = usage.get("input_tokens", 0)
+                    completion_tokens = usage.get("output_tokens", 0)
+                    cache_creation_tokens = usage.get("cache_creation_input_tokens", 0)
+                    cache_read_tokens = usage.get("cache_read_input_tokens", 0)
+                    total_cost_usd = event.get("total_cost_usd", 0.0)
+                    duration = event.get("duration_ms", 0) / 1000
+                    num_turns = event.get("num_turns", 0)
+                    api_duration = event.get("duration_api_ms", 0) / 1000
+                elif "message" in event:
+                    msg_content = event.get("message", {}).get("content")
+                    if msg_content and isinstance(msg_content, list):
+                        for item in msg_content:
+                            if item.get("type") == "tool_result":
+                                tool_calls += 1
+                                if not item.get("is_error"):
+                                    tool_call_success += 1
+
         return AgentResponse(
-                content=content,
-                model=model,
-                raw_response=response,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                cache_tokens=cache_tokens,
-                duration=duration,
-                num_turns=num_turns,
-                tool_calls=tool_calls,
-                tool_call_success=tool_call_success,
-                api_duration=api_duration
-            )
+            content=content,
+            model=model,
+            trajectory=trajectory,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            total_cost_usd=total_cost_usd,
+            duration=duration,
+            num_turns=num_turns,
+            tool_calls=tool_calls,
+            tool_call_success=tool_call_success,
+            api_duration=api_duration,
+        )
 
 class OpenHandsClient(CommandAgentClient):
     def __init__(self, model=None, api_key=None, base_url=None):
@@ -824,16 +984,17 @@ class LLMFactory:
             if not model:
                 model = os.getenv("CODEX_MODEL")
             return CodeXClient(model)
+        elif client_type.lower() == "claude_code":
+            if not model:
+                model = os.getenv("CLAUDE_CODE_MODEL")
+            return ClaudeCodeClient(model=model, api_key=api_key, base_url=base_url)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 
 def main():
-    api_key = os.getenv('OPENAI_API_KEY', 'sk-11TR1NSdoqpvK10I53E689B8D0584eE5938bE321B0Ca955b')
     
     gpt_client = LLMFactory.create_client(
-        'gpt',
-        api_key=api_key,
-        base_url="https://api2.mygptlife.com/v1"
+        'claude_code',
     )
     
     # qwen_client = LLMFactory.create_client(
@@ -845,8 +1006,10 @@ def main():
     prompt = "what is the decorator in python, use chinese "
     
     try:
-        gpt_response = gpt_client.chat(prompt)
+        gpt_response = gpt_client.chat(prompt, project_repo=".")
         print(f"GPT answer:\n{gpt_response.content}\n")
+        print(gpt_response.usage)
+        print(gpt_response.trajectory)
     except Exception as e:
         print(f"GPT error: {str(e)}")
 

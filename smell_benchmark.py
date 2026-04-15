@@ -19,7 +19,8 @@ import uuid
 from testunits import reset_repository, run_project_tests
 from utils import _run_git_command, get_spec, hashcode, prepare_to_run
 from find_candidates import process_repo as generate_candidates
-from claude_cli import call_claude_cli, call_llm, extract_json_from_response
+from claude_cli import call_llm, extract_json_from_response
+from client import LLMFactory
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ from claude_cli import call_claude_cli, call_llm, extract_json_from_response
 
 MAX_FIX_RETRIES = 3
 MAX_CANDIDATE_RETRIES = 3
-DIFFICULTY_LEVELS = ("easy", "medium")
+DIFFICULTY_LEVELS = ( "easy", "medium" )
 
 # Instruction levels for evaluation:
 # - "targeted": give smell type + precise location (file, class, method)
@@ -36,6 +37,8 @@ DIFFICULTY_LEVELS = ("easy", "medium")
 INSTRUCTION_LEVELS = ("targeted", "guided")
 
 # Difficulty amplifiers appended to the template for hard/expert levels
+SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex")
+
 DIFFICULTY_AMPLIFIERS = {
     "easy": "",
     "medium": "",
@@ -116,7 +119,7 @@ def generate_smell_analysis(
     smell_type: str,
     smell_content: str,
     smell_description: str = "",
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
 ) -> Tuple[Optional[str], List[Dict], Dict]:
     """Generate smell analysis and custom rubrics for a case via LLM.
@@ -146,10 +149,37 @@ def generate_smell_analysis(
     return smell_analysis, custom_rubrics, usage
 
 
+def call_agent(
+    prompt: str,
+    cwd: str,
+    agent: str = "claude_code",
+    agent_client: Optional["AgentClient"] = None,
+    model: str = "",
+    api_key: str = "",
+    base_url: str = "",
+) -> Tuple[str, List[Dict], Dict]:
+    """Unified agent call interface. Returns (response_text, trajectory, usage).
+
+    All agents go through LLMFactory / AgentClient.
+    """
+    if agent_client is None:
+        agent_client = LLMFactory.create_client(
+            client_type=agent,
+            model=model or None,
+            api_key=api_key or None,
+            base_url=base_url or None,
+        )
+
+    response = agent_client.chat(prompt, project_repo=cwd)
+
+    return response.content, response.trajectory, response.usage
+
+
 def _accumulate_usage(target: Dict, source: Dict) -> None:
     """Accumulate token usage from source into target dict."""
     for k in ("input_tokens", "output_tokens", "cache_creation_tokens",
-              "cache_read_tokens", "duration_ms"):
+              "cache_read_tokens", "duration_ms",
+              "num_turns", "tool_calls", "tool_call_success"):
         if k in source:
             target[k] = target.get(k, 0) + source[k]
     if "total_cost_usd" in source:
@@ -544,8 +574,9 @@ def process_one_smell(
     target_file_lines: int = 0,
     assignment_key: str = "",
     candidate: Optional[Dict] = None,
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
+    agent: str = "claude_code",
 ) -> Optional[Dict]:
     """Process a single (repo, smell_type) combination.
 
@@ -568,11 +599,11 @@ def process_one_smell(
     reset_repository(repo_path, commit_id)
     prompt = render_prompt(template, smell_type, smell_desc, src_path, difficulty, smell_config, target_file, target_file_lines, candidate)
 
-    print(f"  Calling claude CLI for {repo_name} / {smell_type} ...")
+    print(f"  Calling {agent} for {repo_name} / {smell_type} ...")
     try:
-        response_text, trajectory, usage = call_claude_cli(prompt, cwd=repo_path)
+        response_text, trajectory, usage = call_agent(prompt, cwd=repo_path, agent=agent)
     except Exception as e:
-        print(f"  Claude CLI call failed: {e}")
+        print(f"  Agent call failed: {e}")
         reset_repository(repo_path, commit_id)
         return None
 
@@ -657,7 +688,7 @@ def process_one_smell(
         )
 
         try:
-            response_text, trajectory, usage = call_claude_cli(fix_prompt, cwd=repo_path)
+            response_text, trajectory, usage = call_agent(fix_prompt, cwd=repo_path, agent=agent)
         except Exception as e:
             print(f"  Fix call failed: {e}")
             reset_repository(repo_path, commit_id)
@@ -665,7 +696,8 @@ def process_one_smell(
 
         # Accumulate usage
         for k in ("input_tokens", "output_tokens", "cache_creation_tokens",
-                   "cache_read_tokens", "duration_ms"):
+                   "cache_read_tokens", "duration_ms",
+                   "num_turns", "tool_calls", "tool_call_success"):
             total_usage[k] = total_usage.get(k, 0) + usage.get(k, 0)
         total_usage["total_cost_usd"] = total_usage.get("total_cost_usd", 0.0) + usage.get("total_cost_usd", 0.0)
 
@@ -755,7 +787,7 @@ def process_one_smell(
     )
     result["smell_analysis"] = analysis
     result["custom_rubrics"] = rubrics
-    _accumulate_usage(total_usage, analysis_usage)
+    result["analysis_usage"] = {**analysis_usage, "model": model}
 
     # Write this case immediately to its own directory
     result_path = os.path.join(smell_dir, "result.json")
@@ -772,6 +804,7 @@ def main(args):
     # Load config files
     with open("smell_type.json", "r", encoding="utf-8") as f:
         smell_types = json.load(f)
+    smell_types = smell_types[:1]
 
     with open("repo_list.json", "r", encoding="utf-8") as f:
         repo_list = json.load(f)
@@ -795,43 +828,67 @@ def main(args):
     output_dir = args.output_dir
     os.makedirs(output_dir, exist_ok=True)
 
-    # --- Load existing smell_codes.json for skip logic ---
-    smell_codes_path = os.path.join(output_dir, "smell_codes.json")
-    existing_entries: List[Dict] = []
-    if not args.force and os.path.exists(smell_codes_path):
-        try:
-            with open(smell_codes_path, "r", encoding="utf-8") as f:
-                existing_entries = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            existing_entries = []
-
-    # Build set of completed (repo, smell_type, difficulty) triples
-    # and index existing entries for quick lookup
-    completed_triples = set()       # fully done (has analysis)
-    needs_analysis_triples = set()  # case exists but missing smell_analysis
-    existing_entry_index: Dict[tuple, int] = {}  # triple -> index in existing_entries
-    for idx, entry in enumerate(existing_entries):
-        key = (entry.get("project_name", ""),
-               entry.get("type", ""),
-               entry.get("difficulty", ""))
-        existing_entry_index[key] = idx
-        if entry.get("smell_analysis") and entry.get("custom_rubrics"):
-            completed_triples.add(key)
-        else:
-            needs_analysis_triples.add(key)
-
-    if completed_triples:
-        print(f"Loaded {len(completed_triples)} completed cases from {smell_codes_path}")
-    if needs_analysis_triples:
-        print(f"Found {len(needs_analysis_triples)} cases needing smell analysis")
-
-    all_results = list(existing_entries)  # start from existing data
+    # --- Global smell_codes.json path (used as fallback source for migration) ---
+    global_smell_codes_path = os.path.join(output_dir, "smell_codes.json")
 
     for repo_name, repo_spec in selected_repos.items():
         repo_spec["name"] = repo_name
         repo_path = os.path.join(project_dir, repo_name)
         repo_output_dir = os.path.join(output_dir, repo_name)
         os.makedirs(repo_output_dir, exist_ok=True)
+
+        # --- Load per-repo code_smells.json for skip logic ---
+        repo_smell_codes_path = os.path.join(repo_output_dir, "code_smells.json")
+        existing_entries: List[Dict] = []
+
+        if not args.force:
+            if os.path.exists(repo_smell_codes_path):
+                # Per-repo file exists, load it directly
+                try:
+                    with open(repo_smell_codes_path, "r", encoding="utf-8") as f:
+                        existing_entries = json.load(f)
+                    print(f"Loaded {len(existing_entries)} entries from {repo_smell_codes_path}")
+                except (json.JSONDecodeError, OSError):
+                    existing_entries = []
+            else:
+                # Per-repo file doesn't exist, try to migrate from global smell_codes.json
+                if os.path.exists(global_smell_codes_path):
+                    try:
+                        with open(global_smell_codes_path, "r", encoding="utf-8") as f:
+                            global_entries = json.load(f)
+                        # Filter entries matching this repo
+                        migrated = [e for e in global_entries
+                                    if e.get("project_name") == repo_name]
+                        if migrated:
+                            existing_entries = migrated
+                            # Write migrated entries to per-repo file
+                            with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
+                                json.dump(existing_entries, f, indent=2, ensure_ascii=False)
+                            print(f"Migrated {len(migrated)} entries for {repo_name} "
+                                  f"from {global_smell_codes_path} -> {repo_smell_codes_path}")
+                    except (json.JSONDecodeError, OSError):
+                        pass
+
+        # Build set of completed (smell_type, difficulty) pairs
+        # and index existing entries for quick lookup
+        completed_pairs = set()       # fully done (has analysis)
+        needs_analysis_pairs = set()  # case exists but missing smell_analysis
+        existing_entry_index: Dict[tuple, int] = {}  # pair -> index in existing_entries
+        for idx, entry in enumerate(existing_entries):
+            key = (entry.get("type", ""),
+                   entry.get("difficulty", ""))
+            existing_entry_index[key] = idx
+            if entry.get("smell_analysis") and entry.get("custom_rubrics") and entry.get("analysis_usage"):
+                completed_pairs.add(key)
+            else:
+                needs_analysis_pairs.add(key)
+
+        if completed_pairs:
+            print(f"  {len(completed_pairs)} completed cases for {repo_name}")
+        if needs_analysis_pairs:
+            print(f"  {len(needs_analysis_pairs)} cases needing smell analysis for {repo_name}")
+
+        all_results = list(existing_entries)  # start from existing data for this repo
 
         # Prepare environment
         spec = get_spec(repo_name)
@@ -898,10 +955,10 @@ def main(args):
         for smell in smell_types:
             for difficulty in DIFFICULTY_LEVELS:
                 smell_type = smell["type"]
-                triple = (repo_name, smell_type, difficulty)
-                if triple in completed_triples:
+                pair = (smell_type, difficulty)
+                if pair in completed_pairs:
                     continue
-                if triple in needs_analysis_triples:
+                if pair in needs_analysis_pairs:
                     pending_tasks.append((smell, difficulty, "analysis_only"))
                 else:
                     pending_tasks.append((smell, difficulty, "generate"))
@@ -924,8 +981,8 @@ def main(args):
 
             # --- analysis_only: existing case just needs smell analysis ---
             if mode == "analysis_only":
-                triple = (repo_name, smell_type, difficulty)
-                entry_idx = existing_entry_index[triple]
+                pair = (smell_type, difficulty)
+                entry_idx = existing_entry_index[pair]
                 entry = existing_entries[entry_idx]
                 print(f"\n--- [{task_idx+1}/{len(pending_tasks)}] "
                       f"{smell_type} ({difficulty}) -> generating analysis only ---")
@@ -938,9 +995,7 @@ def main(args):
                 )
                 entry["smell_analysis"] = analysis
                 entry["custom_rubrics"] = rubrics
-                entry_usage = entry.get("usage", {})
-                _accumulate_usage(entry_usage, analysis_usage)
-                entry["usage"] = entry_usage
+                entry["analysis_usage"] = {**analysis_usage, "model": args.model}
                 # Update the corresponding entry in all_results too
                 for i, r in enumerate(all_results):
                     if r.get("instance_id") == entry.get("instance_id"):
@@ -951,8 +1006,8 @@ def main(args):
                     "difficulty": difficulty,
                     "usage": analysis_usage,
                 })
-                # Save immediately
-                with open(smell_codes_path, "w", encoding="utf-8") as f:
+                # Save immediately to per-repo file
+                with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
                     json.dump(all_results, f, indent=2, ensure_ascii=False)
                 print(f"  Analysis generated for {entry.get('instance_id', '?')}")
                 continue
@@ -1004,6 +1059,7 @@ def main(args):
                     candidate=candidate,
                     model=args.model,
                     base_url=args.base_url,
+                    agent=args.agent,
                 )
 
                 if result:
@@ -1020,8 +1076,8 @@ def main(args):
                 })
                 print(f"  Success: {result['instance_id']} ({len(result['testsuites'])} tests)")
 
-                # Append to global smell_codes.json immediately
-                with open(smell_codes_path, "w", encoding="utf-8") as f:
+                # Save to per-repo code_smells.json immediately
+                with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
                     json.dump(all_results, f, indent=2, ensure_ascii=False)
             else:
                 print(f"  Skipped: no valid result for {smell_type} ({difficulty}) after {len(tried_indices)} candidate(s)")
@@ -1030,9 +1086,7 @@ def main(args):
         if usage_records:
             print_usage_summary(usage_records)
 
-        print(f"\nFinished repo {repo_name}")
-
-    print(f"\nDone. Total {len(all_results)} cases in {smell_codes_path}")
+        print(f"\nFinished repo {repo_name}: {len(all_results)} cases in {repo_smell_codes_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1042,8 +1096,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-name", default=None, help="Process a single repo instead of all selected.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists.")
-    parser.add_argument("--model", default="claude-sonnet-4-5-20250929",
-                        help="Model for smell analysis LLM calls (default: claude-sonnet-4-5-20250929).")
+    parser.add_argument("--model", default="anthropic/claude-sonnet-4-5-20250929",
+                        help="Model for smell analysis LLM calls, format: provider/model-name "
+                             "(e.g. anthropic/claude-sonnet-4-5-20250929, openai/gpt-5.1).")
+    parser.add_argument("--agent", default="claude_code",
+                        choices=SUPPORTED_AGENTS,
+                        help="Code agent for smell injection "
+                             f"(choices: {', '.join(SUPPORTED_AGENTS)}).")
     parser.add_argument("--base-url", default=None,
                         help="Base URL for Anthropic API (overrides ANTHROPIC_BASE_URL env var).")
     return parser.parse_args()
