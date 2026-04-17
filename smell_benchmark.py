@@ -510,7 +510,7 @@ def build_function_key(module_path: str, class_name: Optional[str], func_name: s
 
 
 def find_tests_for_functions(
-    main_functions: List,
+    test_functions: List,
     mapping: Dict,
     src_path: str,
     repo_path: str,
@@ -521,7 +521,7 @@ def find_tests_for_functions(
     all_tests = []
     seen = set()
 
-    for func_entry in main_functions:
+    for func_entry in test_functions:
         if not isinstance(func_entry, list) or len(func_entry) < 3:
             continue
         file_path, class_name, func_name = func_entry[0], func_entry[1], func_entry[2]
@@ -688,7 +688,7 @@ def process_one_smell(
     hint_targeted = parsed.get("hint_targeted", "")
     hint_guided = parsed.get("hint_guided", "")
     smell_function = parsed.get("smell_function", [])
-    test_functions = parsed.get("test_functions", parsed.get("main_function", []))
+    test_functions = parsed.get("test_functions", [])
     if test_functions and not isinstance(test_functions[0], list):
         test_functions = [test_functions]
 
@@ -782,7 +782,7 @@ def process_one_smell(
             new_sf = parsed.get("smell_function", [])
             if new_sf:
                 smell_function = new_sf
-            new_tf = parsed.get("test_functions", parsed.get("main_function", []))
+            new_tf = parsed.get("test_functions", [])
             if new_tf:
                 if not isinstance(new_tf[0], list):
                     new_tf = [new_tf]
