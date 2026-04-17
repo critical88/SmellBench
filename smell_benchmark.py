@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -92,27 +93,57 @@ After covering individual changes, provide:
 
 ## Output Format
 
-Return your result as JSON:
-```json
-{{
-  "analysis": "<your full analysis text as described above>",
-  "custom_rubrics": [
-    {{
-      "name": "<short criterion name, e.g. 'Core Smell Resolution'>",
-      "description": "<what this criterion evaluates, tied to the specific smell instance>",
-      "excellent": "<9-10: what an excellent result looks like>",
-      "good": "<7-8: what a good result looks like>",
-      "acceptable": "<5-6: what an acceptable result looks like>",
-      "below_average": "<3-4: what a below-average result looks like>",
-      "poor": "<0-2: what a poor result looks like>"
-    }}
-  ]
-}}
-```
+Return your result using XML tags. Do NOT wrap the output in a code block.
 
-The two `custom_rubrics` should capture the most important evaluation dimensions **specific to this particular smell instance** — things that the generic rubric would miss. They will be added as extra scoring criteria when evaluating candidate fixes. Make them concrete and tied to the actual function/class names in the diff.
+<analysis>
+Your full analysis text as described above. Write freely — no escaping needed.
+</analysis>
 
-Each rubric MUST include all 5 scoring levels: `excellent` (9-10), `good` (7-8), `acceptable` (5-6), `below_average` (3-4), `poor` (0-2). Each level should clearly describe what a result at that score range looks like, with concrete references to the code in the diff."""
+<rubric>
+<name>short criterion name, e.g. Core Smell Resolution</name>
+<description>what this criterion evaluates, tied to the specific smell instance</description>
+<excellent>9-10: what an excellent result looks like</excellent>
+<good>7-8: what a good result looks like</good>
+<acceptable>5-6: what an acceptable result looks like</acceptable>
+<below_average>3-4: what a below-average result looks like</below_average>
+<poor>0-2: what a poor result looks like</poor>
+</rubric>
+
+<rubric>
+<name>second criterion name</name>
+<description>what this criterion evaluates</description>
+<excellent>9-10: description</excellent>
+<good>7-8: description</good>
+<acceptable>5-6: description</acceptable>
+<below_average>3-4: description</below_average>
+<poor>0-2: description</poor>
+</rubric>
+
+The two rubrics should capture the most important evaluation dimensions **specific to this particular smell instance** — things that the generic rubric would miss. They will be added as extra scoring criteria when evaluating candidate fixes. Make them concrete and tied to the actual function/class names in the diff.
+
+Each rubric MUST include all 5 scoring levels. Each level should clearly describe what a result at that score range looks like, with concrete references to the code in the diff."""
+
+
+def _parse_xml_tag(text: str, tag: str) -> Optional[str]:
+    """Extract content between <tag>...</tag>. Returns None if not found."""
+    m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
+    return m.group(1).strip() if m else None
+
+
+def _parse_xml_rubrics(text: str) -> List[Dict]:
+    """Extract all <rubric>...</rubric> blocks and parse their sub-tags."""
+    rubrics = []
+    for m in re.finditer(r"<rubric>(.*?)</rubric>", text, re.DOTALL):
+        block = m.group(1)
+        rubric: Dict[str, Any] = {}
+        for field in ("name", "description", "excellent", "good",
+                      "acceptable", "below_average", "poor"):
+            val = _parse_xml_tag(block, field)
+            if val is not None:
+                rubric[field] = val
+        if rubric.get("name"):
+            rubrics.append(rubric)
+    return rubrics
 
 
 def generate_smell_analysis(
@@ -124,6 +155,9 @@ def generate_smell_analysis(
 ) -> Tuple[Optional[str], List[Dict], Dict]:
     """Generate smell analysis and custom rubrics for a case via LLM.
 
+    The LLM returns XML-tagged output (<analysis>, <rubric>) which is
+    more robust than JSON for long free-text content.
+
     Returns:
         (smell_analysis, custom_rubrics, usage)
     """
@@ -134,17 +168,18 @@ def generate_smell_analysis(
     )
     result = call_llm(prompt, model=model, base_url=base_url)
     usage = result.get("usage", {})
-    parsed = result.get("parsed")
+    raw = result.get("raw", "")
 
-    if parsed:
-        smell_analysis = parsed.get("analysis", result.get("raw", ""))
-        custom_rubrics = parsed.get("custom_rubrics", [])
+    smell_analysis = _parse_xml_tag(raw, "analysis")
+    custom_rubrics = _parse_xml_rubrics(raw)
+
+    if smell_analysis:
         print(f"  Smell analysis generated ({len(smell_analysis)} chars), "
               f"{len(custom_rubrics)} custom rubrics")
     else:
-        smell_analysis = result.get("raw", "")
-        custom_rubrics = []
-        print(f"  Smell analysis generated ({len(smell_analysis)} chars, no structured rubrics)")
+        # Fallback: use raw text as analysis if XML parsing fails
+        smell_analysis = raw
+        print(f"  Smell analysis generated ({len(smell_analysis)} chars, XML parse failed, using raw)")
 
     return smell_analysis, custom_rubrics, usage
 

@@ -358,6 +358,36 @@ class ClaudeCodeClient(CommandAgentClient):
         super().__init__()
         self.model = model or os.getenv("CLAUDE_CODE_MODEL")
         self.input_in_command = False
+        self._ensure_claude_settings(api_key, base_url)
+
+    @staticmethod
+    def _ensure_claude_settings(api_key: str = None, base_url: str = None):
+        """Write ~/.claude/settings.json so the CLI picks up api key & base url."""
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN")
+        base_url = base_url or os.getenv("ANTHROPIC_BASE_URL")
+        if not api_key and not base_url:
+            return  # nothing to configure
+
+        settings_dir = Path.home() / ".claude"
+        settings_file = settings_dir / "settings.json"
+
+        # Load existing settings if present
+        if settings_file.exists():
+            with open(settings_file) as f:
+                settings = json.load(f)
+        else:
+            settings_dir.mkdir(parents=True, exist_ok=True)
+            settings = {}
+
+        env_block = settings.setdefault("env", {})
+        if api_key:
+            env_block["ANTHROPIC_AUTH_TOKEN"] = api_key
+        if base_url:
+            env_block["ANTHROPIC_BASE_URL"] = base_url
+
+        with open(settings_file, "w") as f:
+            json.dump(settings, f, indent=2)
+        print(f"[ClaudeCodeClient] Wrote claude settings to {settings_file}")
 
     def _agent_command(self, model=None):
         model = model or self.model
