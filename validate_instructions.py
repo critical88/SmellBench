@@ -23,6 +23,8 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from pathlib import Path
+
 from claude_cli import call_llm
 
 
@@ -230,6 +232,21 @@ def regenerate_instructions(
     return hint_targeted, hint_guided, result.get("usage", {})
 
 
+def _build_settings_from_repo_spec(repo_spec: Dict, repo_name: str = "") -> Dict:
+    """Build a settings dict from repo_list.json spec fields."""
+    src_path = repo_spec.get("src_path", "")
+    envs = dict(repo_spec.get("envs", {}))
+    if src_path and repo_name and src_path != repo_name:
+        envs.setdefault("PYTHONPATH", str(Path(src_path).parent))
+    return {
+        "src_path": src_path,
+        "commit_id": repo_spec.get("commit_id", ""),
+        "test_cmd": repo_spec.get("test_cmd", ""),
+        "envs": envs,
+        "env_name": repo_spec.get("env_name", ""),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -260,6 +277,23 @@ def main():
 
     print(f"Loaded {len(entries)} entries from {code_smells_path}")
 
+    # Load repo_list.json for backfilling settings
+    repo_spec: Dict = {}
+    repo_list_path = "repo_list.json"
+    if os.path.exists(repo_list_path):
+        with open(repo_list_path, "r", encoding="utf-8") as f:
+            repo_list = json.load(f)
+        repo_spec = repo_list.get(args.repo_name, {})
+
+    # Backfill settings for entries that are missing it
+    settings_backfilled = 0
+    for entry in entries:
+        if not entry.get("settings") and repo_spec:
+            entry["settings"] = _build_settings_from_repo_spec(repo_spec, args.repo_name)
+            settings_backfilled += 1
+    if settings_backfilled:
+        print(f"Backfilled settings for {settings_backfilled} entries from repo_list.json")
+
     # Load smell type descriptions
     smell_types_map: Dict[str, Dict] = {}
     if os.path.exists("smell_type.json"):
@@ -267,7 +301,7 @@ def main():
             for s in json.load(f):
                 smell_types_map[s["type"]] = s
 
-    modified = False
+    modified = settings_backfilled > 0
     total_validated = 0
     total_failed = 0
     total_regenerated = 0

@@ -608,6 +608,21 @@ def capture_diffs(repo_path: str, commit_id: str) -> Tuple[str, str]:
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+def _build_settings(repo_spec: Dict, repo_name: str, commit_id: str) -> Dict:
+    """Build settings dict from repo_spec, auto-adding PYTHONPATH when src_path differs from project name."""
+    src_path = repo_spec.get("src_path", repo_name)
+    envs = dict(repo_spec.get("envs", {}))
+    if src_path != repo_name:
+        envs.setdefault("PYTHONPATH", str(Path(src_path).parent))
+    return {
+        "src_path": src_path,
+        "commit_id": commit_id,
+        "test_cmd": repo_spec.get("test_cmd", ""),
+        "envs": envs,
+        "env_name": repo_spec.get("env_name", ""),
+    }
+
+
 def process_one_smell(
     template: str,
     smell_type: str,
@@ -822,6 +837,7 @@ def process_one_smell(
         "hash": h,
         "commit_hash": commit_id,
         "project_name": repo_name,
+        "settings": _build_settings(repo_spec, repo_name, commit_id),
         "usage": total_usage,
     }
 
