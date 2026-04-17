@@ -124,6 +124,20 @@ The two rubrics should capture the most important evaluation dimensions **specif
 Each rubric MUST include all 5 scoring levels. Each level should clearly describe what a result at that score range looks like, with concrete references to the code in the diff."""
 
 
+_RUBRIC_REQUIRED_FIELDS = ("name", "description", "excellent", "good",
+                           "acceptable", "below_average", "poor")
+
+
+def _has_valid_rubrics(rubrics: Any) -> bool:
+    """Check that rubrics is a non-empty list where each entry has all required fields."""
+    if not isinstance(rubrics, list) or len(rubrics) == 0:
+        return False
+    return all(
+        isinstance(r, dict) and all(r.get(f) for f in _RUBRIC_REQUIRED_FIELDS)
+        for r in rubrics
+    )
+
+
 def _parse_xml_tag(text: str, tag: str) -> Optional[str]:
     """Extract content between <tag>...</tag>. Returns None if not found."""
     m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
@@ -919,7 +933,9 @@ def main(args):
             key = (entry.get("type", ""),
                    entry.get("difficulty", ""))
             existing_entry_index[key] = idx
-            if entry.get("smell_analysis") and entry.get("custom_rubrics") and entry.get("analysis_usage"):
+            if (entry.get("smell_analysis")
+                    and _has_valid_rubrics(entry.get("custom_rubrics"))
+                    and entry.get("analysis_usage")):
                 completed_pairs.add(key)
             else:
                 needs_analysis_pairs.add(key)
