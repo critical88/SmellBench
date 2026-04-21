@@ -71,7 +71,9 @@ def _set_open(entry: Dict, value: str) -> None:
 
 VALIDATE_AND_REGENERATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Validate the existing instructions and regenerate any that have issues.
 
-Focus on checking if instructions LEAK information they shouldn't, not on stylistic preferences.
+**CRITICAL**: Be LENIENT, not overly strict. Only reject if the hint clearly violates the rules below. Focus on checking if instructions LEAK SPECIFIC INFORMATION about what the problem is, not on stylistic preferences or generic quality terms.
+
+When in doubt, ACCEPT the hint rather than reject it.
 
 ## Smell Info
 - **Smell type**: {smell_type}
@@ -115,13 +117,16 @@ Focus on checking if instructions LEAK information they shouldn't, not on stylis
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST be COMPLETELY GENERIC - only file path(s) and a generic refactoring request.
-- Should use clear refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize) rather than vague words like "review", "improve", "check", "examine".
-- REJECT if it:
-  * Hints at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, modularity, separation of concerns, etc.
-  * Reveals the smell type (dead code, god class, feature envy, etc.)
-  * Mentions class names, method names, or function names
+- Should clearly indicate it's a refactoring task, not a vague review or check.
+- **ALLOWED generic quality terms** (DO NOT REJECT these): maintainability, maintainable, readability, readable, code quality, better practices, cleaner code, etc.
+- REJECT ONLY if it:
+  * Hints at the SPECIFIC problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, modularity, separation of concerns, god class, feature envy, dead code, etc.
+  * Reveals the smell type explicitly
+  * Mentions specific class names, method names, or function names
   * Mentions line numbers
-  * Provides any technical details about what issues exist
+  * Describes what specific issues exist or what needs to be fixed
+
+**IMPORTANT**: The key is to reject hints that reveal WHAT the problem is, not generic quality improvement language. Generic terms like "maintainability" or "readability" are acceptable, but specific problem indicators like "coupling" or "god class" are not.
 
 ## Your Task
 

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-CLAUDE_CMD_TEMPLATE = "claude -p --verbose --output-format stream-json"
+CLAUDE_CMD_TEMPLATE = "claude -p --permission-mode acceptEdits --verbose --output-format stream-json"
 
 
 def _print_event_info(event: dict):
