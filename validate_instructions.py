@@ -85,8 +85,10 @@ VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benc
 
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
-- MUST ask to review/improve code quality in the specified file(s).
-- MUST use varied, natural phrasing - REJECT if it's too generic or template-like (e.g., "Review and refactor code smells in X").
+- MUST focus on REFACTORING - use varied refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize).
+- MUST be COMPLETELY GENERIC - only mention file path(s) and a generic refactoring request.
+- MUST use varied, natural phrasing - REJECT if it's too template-like.
+- ABSOLUTELY MUST NOT hint at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
 - MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Entry to validate
@@ -162,7 +164,10 @@ Do NOT mention other files, class/method names, line numbers, implementation det
 
 ### hint_open
 A concise, professional task description (1-2 sentences).
-Ask to review and improve code quality in the specified file(s).
+Ask to REFACTOR the specified file(s) - use varied refactoring verbs: refactor, clean up, simplify, reorganize, restructure, optimize.
+DO NOT use vague words like "review", "improve", "check", "examine" - be specific about refactoring.
+MUST be COMPLETELY GENERIC - ONLY mention file path(s) and a generic refactoring request.
+ABSOLUTELY DO NOT use words that hint at the problem type: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
 Use VARIED phrasing - make each instruction feel unique.
 Do NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
