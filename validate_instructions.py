@@ -195,6 +195,12 @@ def validate_and_regenerate_entry(
     if len(diff_text) > 6000:
         diff_text = diff_text[:6000] + "\n... (truncated)"
 
+    # Get current hints (empty string if missing)
+    targeted = _get_targeted(entry)
+    guided = _get_guided(entry)
+    open_hint = _get_open(entry)
+
+    # Use placeholder for missing hints so LLM knows to generate them
     prompt = VALIDATE_AND_REGENERATE_PROMPT.format(
         smell_type=smell_type,
         smell_description=smell_desc,
@@ -203,9 +209,9 @@ def validate_and_regenerate_entry(
         smell_method=smell_method,
         changed_files=", ".join(changed_files),
         smell_diff=diff_text,
-        hint_targeted=_get_targeted(entry),
-        hint_guided=_get_guided(entry),
-        hint_open=_get_open(entry),
+        hint_targeted=targeted or "(missing - needs generation)",
+        hint_guided=guided or "(missing - needs generation)",
+        hint_open=open_hint or "(missing - needs generation)",
     )
 
     result = call_llm(prompt, model=model, max_tokens=2048, base_url=base_url)
