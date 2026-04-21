@@ -67,125 +67,61 @@ def _set_open(entry: Dict, value: str) -> None:
 # Validation
 # ---------------------------------------------------------------------------
 
-VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benchmark entry has three instruction fields that will be given to a coding agent as task descriptions.
-
-Focus on checking if the instruction LEAKS information it shouldn't, not on stylistic preferences.
-
-## Rules
-
-**hint_targeted**:
-- Should be a concise, professional task description (1-2 sentences).
-- MUST specify the smell type and exact location (file, class, method).
-- REJECT ONLY if it describes implementation details, mechanisms, architecture, what the code does, or reveals multiple affected files.
-
-**hint_guided**:
-- Should be a concise, professional task description (1-2 sentences).
-- MUST specify ONLY the smell type and the single main file path.
-- REJECT ONLY if it mentions other files, class/method names, line numbers, implementation details, or describes how the smell manifests.
-
-**hint_open**:
-- Should be a concise, professional task description (1-2 sentences).
-- MUST focus on refactoring with specific verbs (refactor, clean up, simplify, reorganize, restructure, optimize).
-- REJECT if it uses vague words like "review", "improve", "check", "examine".
-- MUST be COMPLETELY GENERIC - only mention file path(s) and a generic refactoring request.
-- REJECT if it hints at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
-- REJECT if it reveals smell types, class/method names, line numbers, or any technical details about what issues exist.
-
-## Entry to validate
-
-- **Smell type**: {smell_type}
-- **Smell function (ground truth)**: {smell_function}
-- **Files changed in diff**: {changed_files}
-
-### hint_targeted value:
-{hint_targeted}
-
-### hint_guided value:
-{hint_guided}
-
-### hint_open value:
-{hint_open}
-
-## Your Task
-
-Check each field against its rules. Return your result using XML tags:
-
-<targeted_ok>true or false</targeted_ok>
-<targeted_issues>If false, explain what is wrong. If true, write "none".</targeted_issues>
-<guided_ok>true or false</guided_ok>
-<guided_issues>If false, explain what is wrong. If true, write "none".</guided_issues>
-<open_ok>true or false</open_ok>
-<open_issues>If false, explain what is wrong. If true, write "none".</open_issues>
-"""
 
 
-REGENERATE_PROMPT = """You are a benchmark author for a code-smell detection benchmark.
+VALIDATE_AND_REGENERATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Validate the existing instructions and regenerate any that have issues.
 
-Given the following smell injection information, write THREE task instructions for a coding agent at different difficulty levels.
+Focus on checking if instructions LEAK information they shouldn't, not on stylistic preferences.
 
 ## Smell Info
 - **Smell type**: {smell_type}
 - **Smell description**: {smell_description}
-- **Smell function (ground truth)**: file=`{smell_file}`, class=`{smell_class}`, method=`{smell_method}`
-- **Files changed in diff**: {changed_files}
+- **Smell function**: file=`{smell_file}`, class=`{smell_class}`, method=`{smell_method}`
+- **Files changed**: {changed_files}
 
 ## Diff
 ```diff
 {smell_diff}
 ```
 
-## CRITICAL: Diversity Requirements
-Generate instructions with HIGH VARIABILITY. Each instruction should feel unique and natural.
+## Current Instructions
 
-**For hint_targeted and hint_guided** - vary your verb choices: refactor, clean up, eliminate, remove, address, fix, resolve, simplify, reorganize, restructure, extract, consolidate, etc.
+**hint_targeted**: {hint_targeted}
+**hint_guided**: {hint_guided}
+**hint_open**: {hint_open}
 
-**For hint_open** - ONLY use explicit refactoring verbs: refactor, clean up, simplify, reorganize, restructure, optimize. DO NOT use vague verbs like "improve", "review", "check", "examine".
+## Validation Rules
 
-**Vary your sentence structure** - use different patterns:
-- Imperative: "Refactor the X in Y"
-- Request: "Please clean up X in Y"
-- Question: "Can you address X in Y?"
-- Observation: "The X in Y needs refactoring"
-- Task assignment: "We need to eliminate X from Y"
+**hint_targeted**:
+- MUST specify smell type + exact location (file, class, method)
+- REJECT ONLY if: describes implementation details, mechanisms, architecture, what code does, or reveals multiple files
 
-**Vary your phrasing style** - be creative with how you describe the same information.
+**hint_guided**:
+- MUST specify ONLY smell type + single main file
+- REJECT ONLY if: mentions other files, class/method names, line numbers, implementation details, or describes how smell manifests
 
-## Instructions to write
+**hint_open**:
+- MUST be COMPLETELY GENERIC - only file path + generic refactoring request
+- Should use clear refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize) not vague words (review, improve, check, examine)
+- REJECT if: hints at problem type (design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance) OR reveals smell types, class/method names, line numbers, technical details
 
-### hint_targeted
-A concise, professional task description (1-2 sentences).
-MUST specify the smell type and exact location (file, class, method).
-Use VARIED phrasing - do NOT use formulaic patterns like "Refactor the [smell] in [location]" every time.
-Do NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
+## Your Task
 
-### hint_guided
-A concise, professional task description (1-2 sentences).
-MUST specify ONLY the smell type and the single main file path.
-Use VARIED phrasing - explore different ways to ask for the same thing.
-Do NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
+For each hint:
+1. Check if it violates the rules above
+2. If OK, keep it unchanged
+3. If problematic, generate a new one that fixes the issues
 
-### hint_open
-A concise, professional task description (1-2 sentences).
-Ask to REFACTOR the specified file(s) - use varied refactoring verbs: refactor, clean up, simplify, reorganize, restructure, optimize.
-DO NOT use vague words like "review", "improve", "check", "examine" - be specific about refactoring.
-MUST be COMPLETELY GENERIC - ONLY mention file path(s) and a generic refactoring request.
-ABSOLUTELY DO NOT use words that hint at the problem type: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
-Use VARIED phrasing - make each instruction feel unique.
-Do NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
+When regenerating, use varied phrasing and different verbs.
 
 ## Output Format
 
-<hint_targeted>
-Your targeted instruction here.
-</hint_targeted>
-
-<hint_guided>
-Your guided instruction here.
-</hint_guided>
-
-<hint_open>
-Your open instruction here.
-</hint_open>
+<targeted_ok>true or false</targeted_ok>
+<targeted_new>New hint if false, otherwise leave empty</targeted_new>
+<guided_ok>true or false</guided_ok>
+<guided_new>New hint if false, otherwise leave empty</guided_new>
+<open_ok>true or false</open_ok>
+<open_new>New hint if false, otherwise leave empty</open_new>
 """
 
 
@@ -204,55 +140,15 @@ def _extract_changed_files(diff_text: str) -> List[str]:
     return files
 
 
-def validate_entry(
-    entry: Dict,
-    model: str,
-    base_url: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Validate one entry's instructions via LLM.
-
-    Returns dict with keys: targeted_ok, targeted_issues, guided_ok, guided_issues, open_ok, open_issues.
-    """
-    smell_type = entry.get("type", "")
-    smell_function = entry.get("smell_function", [])
-    changed_files = _extract_changed_files(entry.get("smell_content", ""))
-
-    prompt = VALIDATE_PROMPT.format(
-        smell_type=smell_type,
-        smell_function=smell_function,
-        changed_files=", ".join(changed_files),
-        hint_targeted=_get_targeted(entry),
-        hint_guided=_get_guided(entry),
-        hint_open=_get_open(entry),
-    )
-
-    result = call_llm(prompt, model=model, base_url=base_url)
-    raw = result.get("raw", "")
-
-    targeted_ok = _parse_xml_tag(raw, "targeted_ok") or ""
-    guided_ok = _parse_xml_tag(raw, "guided_ok") or ""
-    open_ok = _parse_xml_tag(raw, "open_ok") or ""
-
-    return {
-        "targeted_ok": targeted_ok.strip().lower() == "true",
-        "targeted_issues": _parse_xml_tag(raw, "targeted_issues") or "",
-        "guided_ok": guided_ok.strip().lower() == "true",
-        "guided_issues": _parse_xml_tag(raw, "guided_issues") or "",
-        "open_ok": open_ok.strip().lower() == "true",
-        "open_issues": _parse_xml_tag(raw, "open_issues") or "",
-        "usage": result.get("usage", {}),
-    }
-
-
-def regenerate_instructions(
+def validate_and_regenerate_entry(
     entry: Dict,
     smell_types: Dict[str, Dict],
     model: str,
     base_url: Optional[str] = None,
-) -> Tuple[str, str, str, Dict]:
-    """Regenerate all three instructions for an entry.
+) -> Dict[str, Any]:
+    """Validate and regenerate instructions in a single LLM call.
 
-    Returns (hint_targeted, hint_guided, hint_open, usage).
+    Returns dict with: targeted_ok, targeted_new, guided_ok, guided_new, open_ok, open_new, usage
     """
     smell_type = entry.get("type", "")
     smell_desc = smell_types.get(smell_type, {}).get("desc", "")
@@ -268,7 +164,7 @@ def regenerate_instructions(
     if len(diff_text) > 6000:
         diff_text = diff_text[:6000] + "\n... (truncated)"
 
-    prompt = REGENERATE_PROMPT.format(
+    prompt = VALIDATE_AND_REGENERATE_PROMPT.format(
         smell_type=smell_type,
         smell_description=smell_desc,
         smell_file=smell_file,
@@ -276,16 +172,23 @@ def regenerate_instructions(
         smell_method=smell_method,
         changed_files=", ".join(changed_files),
         smell_diff=diff_text,
+        hint_targeted=_get_targeted(entry),
+        hint_guided=_get_guided(entry),
+        hint_open=_get_open(entry),
     )
 
     result = call_llm(prompt, model=model, max_tokens=2048, base_url=base_url)
     raw = result.get("raw", "")
 
-    hint_targeted = _parse_xml_tag(raw, "hint_targeted") or ""
-    hint_guided = _parse_xml_tag(raw, "hint_guided") or ""
-    hint_open = _parse_xml_tag(raw, "hint_open") or ""
-
-    return hint_targeted, hint_guided, hint_open, result.get("usage", {})
+    return {
+        "targeted_ok": (_parse_xml_tag(raw, "targeted_ok") or "").strip().lower() == "true",
+        "targeted_new": _parse_xml_tag(raw, "targeted_new") or "",
+        "guided_ok": (_parse_xml_tag(raw, "guided_ok") or "").strip().lower() == "true",
+        "guided_new": _parse_xml_tag(raw, "guided_new") or "",
+        "open_ok": (_parse_xml_tag(raw, "open_ok") or "").strip().lower() == "true",
+        "open_new": _parse_xml_tag(raw, "open_new") or "",
+        "usage": result.get("usage", {}),
+    }
 
 
 def _build_settings_from_repo_spec(repo_spec: Dict, repo_name: str = "") -> Dict:
@@ -376,64 +279,50 @@ def main():
             print(f"  {label}: SKIP (no instruction fields)")
             continue
 
-        # --- Force mode: skip validation, regenerate all ---
-        if args.force:
-            print(f"  {label}: FORCE regenerate ...")
-            new_targeted, new_guided, new_open, usage = regenerate_instructions(
-                entry, smell_types_map, model=args.model, base_url=args.base_url,
-            )
-            if new_targeted:
-                _set_targeted(entry, new_targeted)
-            if new_guided:
-                _set_guided(entry, new_guided)
-            if new_open:
-                _set_open(entry, new_open)
-            modified = True
-            total_regenerated += 1
-            print(f"    targeted: {new_targeted[:80]}...")
-            print(f"    guided:   {new_guided[:80]}...")
-            print(f"    open:     {new_open[:80]}...")
-            continue
-
-        # --- Validate ---
+        # --- Validate and regenerate in one call ---
         print(f"  {label}: validating ...")
         total_validated += 1
-        vresult = validate_entry(entry, model=args.model, base_url=args.base_url)
 
-        if vresult["targeted_ok"] and vresult["guided_ok"] and vresult["open_ok"]:
+        result = validate_and_regenerate_entry(
+            entry, smell_types_map, model=args.model, base_url=args.base_url
+        )
+
+        # Check if all passed
+        if result["targeted_ok"] and result["guided_ok"] and result["open_ok"]:
             print(f"    PASS")
             continue
 
+        # Report failures
         total_failed += 1
-        if not vresult["targeted_ok"]:
-            print(f"    targeted FAIL: {vresult['targeted_issues']}")
-        if not vresult["guided_ok"]:
-            print(f"    guided FAIL: {vresult['guided_issues']}")
-        if not vresult["open_ok"]:
-            print(f"    open FAIL: {vresult['open_issues']}")
+        if not result["targeted_ok"]:
+            print(f"    targeted FAIL - regenerated")
+        if not result["guided_ok"]:
+            print(f"    guided FAIL - regenerated")
+        if not result["open_ok"]:
+            print(f"    open FAIL - regenerated")
 
         if args.dry_run:
             continue
 
-        # --- Regenerate all three hints together ---
-        print(f"    Regenerating ...")
-        new_targeted, new_guided, new_open, usage = regenerate_instructions(
-            entry, smell_types_map, model=args.model, base_url=args.base_url,
-        )
-        if new_targeted:
-            _set_targeted(entry, new_targeted)
-            print(f"    new targeted: {new_targeted[:80]}...")
-        if new_guided:
-            _set_guided(entry, new_guided)
-            print(f"    new guided:   {new_guided[:80]}...")
-        if new_open:
-            _set_open(entry, new_open)
-            print(f"    new open:     {new_open[:80]}...")
-        modified = True
-        total_regenerated += 1
+        # Apply regenerated hints
+        any_changed = False
+        if result["targeted_new"]:
+            _set_targeted(entry, result["targeted_new"])
+            print(f"    new targeted: {result['targeted_new'][:80]}...")
+            any_changed = True
+        if result["guided_new"]:
+            _set_guided(entry, result["guided_new"])
+            print(f"    new guided:   {result['guided_new'][:80]}...")
+            any_changed = True
+        if result["open_new"]:
+            _set_open(entry, result["open_new"])
+            print(f"    new open:     {result['open_new'][:80]}...")
+            any_changed = True
 
-        # --- Save immediately after each case ---
-        if modified and not args.dry_run:
+        if any_changed:
+            modified = True
+            total_regenerated += 1
+            # Save immediately after each case
             with open(code_smells_path, "w", encoding="utf-8") as f:
                 json.dump(entries, f, indent=2, ensure_ascii=False)
             print(f"    Saved to {code_smells_path}")
