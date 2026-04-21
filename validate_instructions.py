@@ -396,42 +396,67 @@ def main():
             print(f"    open:     {new_open[:80]}...")
             continue
 
-        # --- Validate ---
+        # --- Validate (one at a time) ---
         print(f"  {label}: validating ...")
         total_validated += 1
         vresult = validate_entry(entry, model=args.model, base_url=args.base_url)
 
-        if vresult["targeted_ok"] and vresult["guided_ok"] and vresult["open_ok"]:
-            print(f"    PASS")
-            continue
+        any_failed = False
+        regeneration_count = 0
 
-        total_failed += 1
+        # Check and fix targeted
         if not vresult["targeted_ok"]:
+            total_failed += 1
+            any_failed = True
             print(f"    targeted FAIL: {vresult['targeted_issues']}")
+            if not args.dry_run:
+                print(f"    Regenerating targeted ...")
+                new_targeted, new_guided, new_open, usage = regenerate_instructions(
+                    entry, smell_types_map, model=args.model, base_url=args.base_url,
+                )
+                if new_targeted:
+                    _set_targeted(entry, new_targeted)
+                    print(f"    new targeted: {new_targeted[:80]}...")
+                    modified = True
+                    regeneration_count += 1
+
+        # Check and fix guided
         if not vresult["guided_ok"]:
+            total_failed += 1
+            any_failed = True
             print(f"    guided FAIL: {vresult['guided_issues']}")
+            if not args.dry_run:
+                print(f"    Regenerating guided ...")
+                new_targeted, new_guided, new_open, usage = regenerate_instructions(
+                    entry, smell_types_map, model=args.model, base_url=args.base_url,
+                )
+                if new_guided:
+                    _set_guided(entry, new_guided)
+                    print(f"    new guided:   {new_guided[:80]}...")
+                    modified = True
+                    regeneration_count += 1
+
+        # Check and fix open
         if not vresult["open_ok"]:
+            total_failed += 1
+            any_failed = True
             print(f"    open FAIL: {vresult['open_issues']}")
+            if not args.dry_run:
+                print(f"    Regenerating open ...")
+                new_targeted, new_guided, new_open, usage = regenerate_instructions(
+                    entry, smell_types_map, model=args.model, base_url=args.base_url,
+                )
+                if new_open:
+                    _set_open(entry, new_open)
+                    print(f"    new open:     {new_open[:80]}...")
+                    modified = True
+                    regeneration_count += 1
 
-        if args.dry_run:
-            continue
+        if regeneration_count > 0:
+            total_regenerated += regeneration_count
 
-        # --- Regenerate ---
-        print(f"    Regenerating ...")
-        new_targeted, new_guided, new_open, usage = regenerate_instructions(
-            entry, smell_types_map, model=args.model, base_url=args.base_url,
-        )
-        if new_targeted:
-            _set_targeted(entry, new_targeted)
-            print(f"    new targeted: {new_targeted[:80]}...")
-        if new_guided:
-            _set_guided(entry, new_guided)
-            print(f"    new guided:   {new_guided[:80]}...")
-        if new_open:
-            _set_open(entry, new_open)
-            print(f"    new open:     {new_open[:80]}...")
-        modified = True
-        total_regenerated += 1
+        if not any_failed:
+            print(f"    PASS")
 
     # --- Save ---
     print(f"\nSummary: {total_validated} validated, {total_failed} failed, "
