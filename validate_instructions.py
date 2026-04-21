@@ -69,28 +69,27 @@ def _set_open(entry: Dict, value: str) -> None:
 
 VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benchmark entry has three instruction fields that will be given to a coding agent as task descriptions.
 
+Focus on checking if the instruction LEAKS information it shouldn't, not on stylistic preferences.
+
 ## Rules
 
 **hint_targeted**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST specify the smell type and exact location (file, class, method).
-- MUST use varied, natural phrasing - REJECT if it follows a formulaic pattern like "Refactor the X in Y" or "Address the X in Y". Instructions should feel unique and natural.
-- MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
+- REJECT ONLY if it describes implementation details, mechanisms, architecture, what the code does, or reveals multiple affected files.
 
 **hint_guided**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST specify ONLY the smell type and the single main file path.
-- MUST use varied, natural phrasing - REJECT if it's too formulaic or template-like. Each instruction should feel different.
-- MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
+- REJECT ONLY if it mentions other files, class/method names, line numbers, implementation details, or describes how the smell manifests.
 
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
-- MUST focus on REFACTORING - use varied refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize).
-- REJECT if it uses vague words like "review", "improve", "check", "examine" - these are too ambiguous.
+- MUST focus on refactoring with specific verbs (refactor, clean up, simplify, reorganize, restructure, optimize).
+- REJECT if it uses vague words like "review", "improve", "check", "examine".
 - MUST be COMPLETELY GENERIC - only mention file path(s) and a generic refactoring request.
-- MUST use varied, natural phrasing - REJECT if it's too template-like.
-- ABSOLUTELY MUST NOT hint at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
-- MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
+- REJECT if it hints at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
+- REJECT if it reveals smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Entry to validate
 
@@ -396,78 +395,57 @@ def main():
             print(f"    open:     {new_open[:80]}...")
             continue
 
-        # --- Validate (one at a time) ---
+        # --- Validate ---
         print(f"  {label}: validating ...")
         total_validated += 1
         vresult = validate_entry(entry, model=args.model, base_url=args.base_url)
 
-        any_failed = False
-        regeneration_count = 0
-
-        # Check and fix targeted
-        if not vresult["targeted_ok"]:
-            total_failed += 1
-            any_failed = True
-            print(f"    targeted FAIL: {vresult['targeted_issues']}")
-            if not args.dry_run:
-                print(f"    Regenerating targeted ...")
-                new_targeted, new_guided, new_open, usage = regenerate_instructions(
-                    entry, smell_types_map, model=args.model, base_url=args.base_url,
-                )
-                if new_targeted:
-                    _set_targeted(entry, new_targeted)
-                    print(f"    new targeted: {new_targeted[:80]}...")
-                    modified = True
-                    regeneration_count += 1
-
-        # Check and fix guided
-        if not vresult["guided_ok"]:
-            total_failed += 1
-            any_failed = True
-            print(f"    guided FAIL: {vresult['guided_issues']}")
-            if not args.dry_run:
-                print(f"    Regenerating guided ...")
-                new_targeted, new_guided, new_open, usage = regenerate_instructions(
-                    entry, smell_types_map, model=args.model, base_url=args.base_url,
-                )
-                if new_guided:
-                    _set_guided(entry, new_guided)
-                    print(f"    new guided:   {new_guided[:80]}...")
-                    modified = True
-                    regeneration_count += 1
-
-        # Check and fix open
-        if not vresult["open_ok"]:
-            total_failed += 1
-            any_failed = True
-            print(f"    open FAIL: {vresult['open_issues']}")
-            if not args.dry_run:
-                print(f"    Regenerating open ...")
-                new_targeted, new_guided, new_open, usage = regenerate_instructions(
-                    entry, smell_types_map, model=args.model, base_url=args.base_url,
-                )
-                if new_open:
-                    _set_open(entry, new_open)
-                    print(f"    new open:     {new_open[:80]}...")
-                    modified = True
-                    regeneration_count += 1
-
-        if regeneration_count > 0:
-            total_regenerated += regeneration_count
-
-        if not any_failed:
+        if vresult["targeted_ok"] and vresult["guided_ok"] and vresult["open_ok"]:
             print(f"    PASS")
+            continue
 
-    # --- Save ---
+        total_failed += 1
+        if not vresult["targeted_ok"]:
+            print(f"    targeted FAIL: {vresult['targeted_issues']}")
+        if not vresult["guided_ok"]:
+            print(f"    guided FAIL: {vresult['guided_issues']}")
+        if not vresult["open_ok"]:
+            print(f"    open FAIL: {vresult['open_issues']}")
+
+        if args.dry_run:
+            continue
+
+        # --- Regenerate all three hints together ---
+        print(f"    Regenerating ...")
+        new_targeted, new_guided, new_open, usage = regenerate_instructions(
+            entry, smell_types_map, model=args.model, base_url=args.base_url,
+        )
+        if new_targeted:
+            _set_targeted(entry, new_targeted)
+            print(f"    new targeted: {new_targeted[:80]}...")
+        if new_guided:
+            _set_guided(entry, new_guided)
+            print(f"    new guided:   {new_guided[:80]}...")
+        if new_open:
+            _set_open(entry, new_open)
+            print(f"    new open:     {new_open[:80]}...")
+        modified = True
+        total_regenerated += 1
+
+        # --- Save immediately after each case ---
+        if modified and not args.dry_run:
+            with open(code_smells_path, "w", encoding="utf-8") as f:
+                json.dump(entries, f, indent=2, ensure_ascii=False)
+            print(f"    Saved to {code_smells_path}")
+
+    # --- Summary ---
     print(f"\nSummary: {total_validated} validated, {total_failed} failed, "
           f"{total_regenerated} regenerated")
 
-    if modified and not args.dry_run:
-        with open(code_smells_path, "w", encoding="utf-8") as f:
-            json.dump(entries, f, indent=2, ensure_ascii=False)
-        print(f"Updated {code_smells_path}")
-    elif args.dry_run:
+    if args.dry_run:
         print("(dry-run, no changes written)")
+    elif modified:
+        print(f"All changes saved to {code_smells_path}")
     else:
         print("No changes needed.")
 
