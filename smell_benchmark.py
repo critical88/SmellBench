@@ -30,7 +30,7 @@ from client import LLMFactory
 
 MAX_FIX_RETRIES = 3
 MAX_CANDIDATE_RETRIES = 3
-DIFFICULTY_LEVELS = ( "easy", "medium" )
+DIFFICULTY_LEVELS = ( "easy", "medium", "hard")
 
 # Instruction levels for evaluation:
 # - "targeted": give smell type + precise location (file, class, method)
@@ -43,20 +43,23 @@ SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex")
 DIFFICULTY_AMPLIFIERS = {
     "easy": "",
     "medium": "",
-    "hard": """### 🔥 Difficulty Amplifiers (REQUIRED)
+    "hard": "",
+#     "hard": """### 🔥 Difficulty Amplifiers (REQUIRED)
 
-1. **Camouflage**: The smell must look like an intentional design pattern (e.g., Strategy, Observer, Decorator, Adapter) — not an obvious mistake or code rot.
-2. **Diff noise**: Interleave the smell injection with small legitimate improvements (rename a variable for clarity, extract a constant) so the diff is not purely smell-related.
-3. **Multi-step resolution**: Fixing the smell must require coordinated changes in 3+ locations — fixing any single location alone should either break tests or leave the smell partially intact.
-4. **Indirect coupling**: Use at least one layer of indirection (callbacks, shared mutable state, config-driven dispatch, or dynamic attribute access) to hide the dependency chain.""",
-    "expert": """### 🔥 Difficulty Amplifiers (REQUIRED — Expert Level)
+# 1. **Camouflage**: The smell must look like an intentional design pattern (e.g., Strategy, Observer, Decorator, Adapter) — not an obvious mistake or code rot.
+# 2. **Diff noise**: Interleave the smell injection with small legitimate improvements (rename a variable for clarity, extract a constant) so the diff is not purely smell-related.
+# 3. **Multi-step resolution**: Fixing the smell must require coordinated changes in 3+ locations — fixing any single location alone should either break tests or leave the smell partially intact.
+# 4. **Indirect coupling**: Use at least one layer of indirection (callbacks, shared mutable state, config-driven dispatch, or dynamic attribute access) to hide the dependency chain.""",
+    
+#     "expert": """### 🔥 Difficulty Amplifiers (REQUIRED — Expert Level)
 
-1. **Camouflage**: The smell MUST masquerade as a recognized design pattern (e.g., Strategy, Mediator, Template Method, Abstract Factory). An experienced developer reviewing the code should initially believe the pattern is intentional.
-2. **Red herrings**: Introduce 1-2 code regions that superficially resemble the same smell type but are actually correct / well-designed. The agent must distinguish the real smell from the decoys.
-3. **Semantic dependency**: The smell should only be identifiable by understanding the domain/business logic — pure structural or syntactic analysis must be insufficient. For example, two functions that look independent but operate on the same conceptual entity.
-4. **Entanglement**: Deeply interleave smell-related changes with legitimate code so that a naive "revert the diff" approach would break functionality. Add small behavioral improvements that must be preserved.
-5. **Multi-step resolution**: Fixing the smell must require coordinated, order-dependent changes in 4+ locations. Partial fixes must leave the code in a worse state than the smell itself.
-6. **Indirect coupling**: Use at least two layers of indirection (e.g., registry + callback, config + dynamic import, decorator + shared state) to hide the real dependency chain from static analysis.""",
+# 1. **Camouflage**: The smell MUST masquerade as a recognized design pattern (e.g., Strategy, Mediator, Template Method, Abstract Factory). An experienced developer reviewing the code should initially believe the pattern is intentional.
+# 2. **Red herrings**: Introduce 1-2 code regions that superficially resemble the same smell type but are actually correct / well-designed. The agent must distinguish the real smell from the decoys.
+# 3. **Semantic dependency**: The smell should only be identifiable by understanding the domain/business logic — pure structural or syntactic analysis must be insufficient. For example, two functions that look independent but operate on the same conceptual entity.
+# 4. **Entanglement**: Deeply interleave smell-related changes with legitimate code so that a naive "revert the diff" approach would break functionality. Add small behavioral improvements that must be preserved.
+# 5. **Multi-step resolution**: Fixing the smell must require coordinated, order-dependent changes in 4+ locations. Partial fixes must leave the code in a worse state than the smell itself.
+# 6. **Indirect coupling**: Use at least two layers of indirection (e.g., registry + callback, config + dynamic import, decorator + shared state) to hide the real dependency chain from static analysis.""",
+    "expert": ""
 }
 
 
@@ -885,7 +888,7 @@ def main(args):
     # Filter to selected repos (or single repo if specified)
     selected_repos = {}
     for name, spec in repo_list.items():
-        if args.project_name and name != args.project_name:
+        if args.project_name and name not in args.project_name:
             continue
         if not args.project_name and not spec.get("selected", False):
             continue
@@ -1166,7 +1169,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Code smell injection benchmark pipeline.")
     parser.add_argument("--project-dir", default="../project", help="Root directory containing cloned repos.")
     parser.add_argument("--output-dir", default="output", help="Output directory for results.")
-    parser.add_argument("--project-name", default=None, help="Process a single repo instead of all selected.")
+    parser.add_argument("--project-name", nargs="+", default=None, help="Process one or more repos instead of all selected.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
     parser.add_argument("--force", action="store_true", help="Re-run even if output exists.")
     parser.add_argument("--model", default="anthropic/claude-sonnet-4-5-20250929",
