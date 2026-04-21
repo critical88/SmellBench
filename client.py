@@ -352,7 +352,7 @@ class QwenCodeClient(CommandAgentClient):
 
 
 class ClaudeCodeClient(CommandAgentClient):
-    TIMEOUT = 1200  # 20 minutes, matching claude_cli.py
+    TIMEOUT = 3600  # 20 minutes, matching claude_cli.py
 
     def __init__(self, model=None, api_key=None, base_url=None):
         super().__init__()
