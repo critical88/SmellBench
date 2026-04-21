@@ -71,8 +71,8 @@ VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benc
 
 **hint_guided** (also called "hard"):
 - MUST mention the smell type.
-- MUST mention at least one related file path.
-- MUST NOT reveal specific class names, method names, or line numbers — the agent must discover those itself.
+- MUST mention ONLY the single main file where the smell is centered.
+- MUST NOT reveal multiple file paths, class names, method names, or line numbers — the agent must discover those itself.
 - Should read as a natural-language task asking the agent to find and refactor the smell.
 
 ## Entry to validate

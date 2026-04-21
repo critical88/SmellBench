@@ -332,6 +332,7 @@ def build_fix_prompt(
     smell_content: str,
     test_scripts: List[str],
     test_error_output: str,
+    template_path: str = "template/fix_template.md",
 ) -> str:
     """Build a prompt asking the agent to fix test failures after smell injection."""
     tests_str = "\n".join(f"- {t}" for t in test_scripts)
@@ -339,45 +340,14 @@ def build_fix_prompt(
     if len(test_error_output) > 4000:
         test_error_output = test_error_output[:4000] + "\n... (truncated)"
 
-    return f"""You previously injected a "{smell_type}" code smell into this codebase.
-The changes you made caused the following unit tests to FAIL.
+    with open(template_path, "r", encoding="utf-8") as f:
+        template = f.read()
 
-Your task: fix the code so that all tests pass while KEEPING the injected code smell intact.
-The smell must still be present and non-trivial after your fix.
-
-Do NOT run any tests yourself — testing is handled externally.
-
-## Diff of your previous changes
-```diff
-{smell_content}
-```
-
-## Failing test scripts
-{tests_str}
-
-## Test error output
-```
-{test_error_output}
-```
-
-## Requirements
-1. Fix the failing tests while preserving the code smell injection
-2. The code must compile/run correctly
-3. Do NOT remove the smell — only fix the breakage
-4. Do NOT create new files
-5. Do NOT run any test commands (pytest, unittest, etc.)
-
-After making your fixes, output the same JSON format as before:
-```json
-{{
-  "hint_targeted": "Natural language task: tell agent to find and refactor the smell. Include smell type + file + class/method. No fixed format.",
-  "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include ONLY smell type + related file paths. Do NOT reveal class/method names. No fixed format.",
-  "hint_open": "Natural language task: tell agent to find and refactor code smells in a given file. Include ONLY the file path(s). Do NOT reveal the smell type, class names, or method names. No fixed format.",
-  "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
-  "test_functions": [["<absolute_file_path>", "<class name or null>", "<function_name>"]]
-}}
-```
-"""
+    prompt = template.replace("[SMELL_TYPE]", smell_type)
+    prompt = prompt.replace("[SMELL_CONTENT]", smell_content)
+    prompt = prompt.replace("[TEST_SCRIPTS]", tests_str)
+    prompt = prompt.replace("[TEST_ERROR_OUTPUT]", test_error_output)
+    return prompt
 
 
 def save_attempt(

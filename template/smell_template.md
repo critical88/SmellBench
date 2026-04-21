@@ -67,7 +67,7 @@ Format:
 ```json
 {
   "hint_targeted": "A natural-language task description that tells the agent to identify and refactor a specific code smell. Must include: the smell type, the specific file path, class name (if applicable), and method name (if applicable). Write freely — do NOT follow a fixed template.",
-  "hint_guided": "A natural-language task description that tells the agent to identify and refactor a specific code smell. Must include ONLY: the smell type and the file paths involved. Do NOT reveal specific class names, method names, or line numbers — the agent must discover those itself. Write freely — do NOT follow a fixed template.",
+  "hint_guided": "A natural-language task description that tells the agent to identify and refactor a specific code smell. Must include ONLY: the smell type and the single main file where the smell is centered. Do NOT reveal multiple file paths, class names, method names, or line numbers — the agent must discover those itself. Write freely — do NOT follow a fixed template.",
   "hint_open": "A natural-language task description that tells the agent to find and refactor code smells in a given file. Must include ONLY: the file path(s) involved. Do NOT reveal the smell type, class names, method names, or line numbers — the agent must discover everything itself. Write freely — do NOT follow a fixed template.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [
