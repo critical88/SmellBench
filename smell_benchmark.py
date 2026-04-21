@@ -644,6 +644,7 @@ def process_one_smell(
     model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
     agent: str = "claude_code",
+    agent_model: str = "claude-opus-4-6",
 ) -> Optional[Dict]:
     """Process a single (repo, smell_type) combination.
 
@@ -668,7 +669,7 @@ def process_one_smell(
 
     print(f"  Calling {agent} for {repo_name} / {smell_type} ...")
     try:
-        response_text, trajectory, usage = call_agent(prompt, cwd=repo_path, agent=agent)
+        response_text, trajectory, usage = call_agent(prompt, cwd=repo_path, agent=agent, model=agent_model)
     except Exception as e:
         print(f"  Agent call failed: {e}")
         reset_repository(repo_path, commit_id)
@@ -755,7 +756,7 @@ def process_one_smell(
         )
 
         try:
-            response_text, trajectory, usage = call_agent(fix_prompt, cwd=repo_path, agent=agent)
+            response_text, trajectory, usage = call_agent(fix_prompt, cwd=repo_path, agent=agent, model=agent_model)
         except Exception as e:
             print(f"  Fix call failed: {e}")
             reset_repository(repo_path, commit_id)
@@ -1136,6 +1137,7 @@ def main(args):
                     model=args.model,
                     base_url=args.base_url,
                     agent=args.agent,
+                    agent_model=args.agent_model,
                 )
 
                 if result:
@@ -1179,6 +1181,8 @@ def parse_args() -> argparse.Namespace:
                         choices=SUPPORTED_AGENTS,
                         help="Code agent for smell injection "
                              f"(choices: {', '.join(SUPPORTED_AGENTS)}).")
+    parser.add_argument("--agent-model", default="claude-opus-4-6",
+                        help="Model for the code agent (default: claude-opus-4-6).")
     parser.add_argument("--base-url", default=None,
                         help="Base URL for Anthropic API (overrides ANTHROPIC_BASE_URL env var).")
     parser.add_argument("--test", action="store_true",
