@@ -28,29 +28,42 @@ from client import LLMFactory
 # Constants
 # ---------------------------------------------------------------------------
 
-MAX_FIX_RETRIES = 3
+MAX_FIX_RETRIES = 1
 MAX_CANDIDATE_RETRIES = 3
 DIFFICULTY_LEVELS = ( "easy", "medium", "hard")
 
 # Instruction levels for evaluation:
 # - "targeted": give smell type + precise location (file, class, method)
 # - "guided":   give smell type + related file paths only, agent finds the rest
-INSTRUCTION_LEVELS = ("targeted", "guided")
+INSTRUCTION_LEVELS = ("targeted", "guided", "open")
 
 # Difficulty amplifiers appended to the template for hard/expert levels
 SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex")
 
 DIFFICULTY_AMPLIFIERS = {
-    "easy": "",
-    "medium": "",
-    "hard": "",
-#     "hard": """### 🔥 Difficulty Amplifiers (REQUIRED)
+    "easy": """### Difficulty Constraints (Easy)
 
-# 1. **Camouflage**: The smell must look like an intentional design pattern (e.g., Strategy, Observer, Decorator, Adapter) — not an obvious mistake or code rot.
-# 2. **Diff noise**: Interleave the smell injection with small legitimate improvements (rename a variable for clarity, extract a constant) so the diff is not purely smell-related.
-# 3. **Multi-step resolution**: Fixing the smell must require coordinated changes in 3+ locations — fixing any single location alone should either break tests or leave the smell partially intact.
-# 4. **Indirect coupling**: Use at least one layer of indirection (callbacks, shared mutable state, config-driven dispatch, or dynamic attribute access) to hide the dependency chain.""",
-    
+1. **Single location**: The smell should be concentrated in a single file and a single function or class. Avoid spreading changes across multiple files.
+2. **Obvious pattern**: The smell should be recognizable through straightforward structural or syntactic analysis — no hidden indirection or domain knowledge required.
+3. **Clean diff**: The diff should contain only smell-related changes. Do NOT mix in unrelated improvements, renames, or refactors.
+4. **Simple fix**: A competent developer should be able to fix the smell by modifying only 1-2 locations.""",
+
+    "medium": """### Difficulty Constraints (Medium)
+
+1. **Limited scope**: The smell should span 1-2 files. Changes may touch multiple functions but the core issue should be locatable within a small area.
+2. **Light camouflage**: The smell may resemble a common but suboptimal coding pattern (e.g., overly broad exception handling, unnecessary delegation). It should not be immediately obvious at a glance but should be identifiable with moderate inspection.
+3. **Minor noise**: Include 1-2 small legitimate improvements (e.g., rename a poorly named variable, extract a magic number) alongside the smell injection, so the diff is not purely smell-related.
+4. **Multi-point fix**: Fixing the smell should require coordinated changes in 2-3 locations.""",
+
+    # "hard": "",
+    "hard": """### 🔥 Difficulty Amplifiers (REQUIRED)
+1. **Camouflage**: The smell MUST masquerade as a recognized design pattern (e.g., Strategy, Mediator, Template Method, Abstract Factory). An experienced developer reviewing the code should initially believe the pattern is intentional.
+2. **Red herrings**: Introduce 1-2 code regions that superficially resemble the same smell type but are actually correct / well-designed. The agent must distinguish the real smell from the decoys.
+3. **Semantic dependency**: The smell should only be identifiable by understanding the domain/business logic — pure structural or syntactic analysis must be insufficient. For example, two functions that look independent but operate on the same conceptual entity.
+4. **Entanglement**: Deeply interleave smell-related changes with legitimate code so that a naive "revert the diff" approach would break functionality. Add small behavioral improvements that must be preserved.
+5. **Multi-step resolution**: Fixing the smell must require coordinated, order-dependent changes in 4+ locations. Partial fixes must leave the code in a worse state than the smell itself.
+6. **Indirect coupling**: Use at least two layers of indirection (e.g., registry + callback, config + dynamic import, decorator + shared state) to hide the real dependency chain from static analysis.""",
+
 #     "expert": """### 🔥 Difficulty Amplifiers (REQUIRED — Expert Level)
 
 # 1. **Camouflage**: The smell MUST masquerade as a recognized design pattern (e.g., Strategy, Mediator, Template Method, Abstract Factory). An experienced developer reviewing the code should initially believe the pattern is intentional.
@@ -359,6 +372,7 @@ After making your fixes, output the same JSON format as before:
 {{
   "hint_targeted": "Natural language task: tell agent to find and refactor the smell. Include smell type + file + class/method. No fixed format.",
   "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include ONLY smell type + related file paths. Do NOT reveal class/method names. No fixed format.",
+  "hint_open": "Natural language task: tell agent to find and refactor code smells in a given file. Include ONLY the file path(s). Do NOT reveal the smell type, class names, or method names. No fixed format.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [["<absolute_file_path>", "<class name or null>", "<function_name>"]]
 }}
@@ -691,6 +705,7 @@ def process_one_smell(
 
     hint_targeted = parsed.get("hint_targeted", "")
     hint_guided = parsed.get("hint_guided", "")
+    hint_open = parsed.get("hint_open", "")
     smell_function = parsed.get("smell_function", [])
     test_functions = parsed.get("test_functions", [])
     if test_functions and not isinstance(test_functions[0], list):
@@ -783,6 +798,7 @@ def process_one_smell(
             parsed = new_parsed
             hint_targeted = parsed.get("hint_targeted", hint_targeted)
             hint_guided = parsed.get("hint_guided", hint_guided)
+            hint_open = parsed.get("hint_open", hint_open)
             new_sf = parsed.get("smell_function", [])
             if new_sf:
                 smell_function = new_sf
@@ -833,6 +849,7 @@ def process_one_smell(
         "assignment_key": assignment_key,
         "hint_targeted": hint_targeted,
         "hint_guided": hint_guided,
+        "hint_open": hint_open,
         "smell_function": normalized_smell_function,
         "test_functions": normalized_test_functions,
         "testsuites": testsuites,
