@@ -93,34 +93,57 @@ Focus on checking if instructions LEAK information they shouldn't, not on stylis
 ## Validation Rules
 
 **hint_targeted**:
-- MUST specify smell type + exact location (file, class, method)
-- REJECT ONLY if: describes implementation details, mechanisms, architecture, what code does, or reveals multiple files
+- Should be a concise, professional task description (1-2 sentences).
+- MUST specify the smell type and exact location (file, class, method).
+- REJECT ONLY if it:
+  * Describes implementation details (how the code works internally)
+  * Describes mechanisms (the technical approach or pattern used)
+  * Describes architecture (system design or relationships between components)
+  * Describes what the code does (its functionality or purpose)
+  * Reveals multiple affected files (should focus on the main location only)
 
 **hint_guided**:
-- MUST specify ONLY smell type + single main file
-- REJECT ONLY if: mentions other files, class/method names, line numbers, implementation details, or describes how smell manifests
+- Should be a concise, professional task description (1-2 sentences).
+- MUST specify ONLY the smell type and the single main file path.
+- REJECT ONLY if it:
+  * Mentions other files beyond the main file
+  * Mentions class names or method names (agent should discover these)
+  * Mentions line numbers
+  * Describes implementation details
+  * Describes how the smell manifests (the specific pattern or structure)
 
 **hint_open**:
-- MUST be COMPLETELY GENERIC - only file path + generic refactoring request
-- Should use clear refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize) not vague words (review, improve, check, examine)
-- REJECT if: hints at problem type (design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance) OR reveals smell types, class/method names, line numbers, technical details
+- Should be a concise, professional task description (1-2 sentences).
+- MUST be COMPLETELY GENERIC - only file path(s) and a generic refactoring request.
+- Should use clear refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize) rather than vague words like "review", "improve", "check", "examine".
+- REJECT if it:
+  * Hints at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, modularity, separation of concerns, etc.
+  * Reveals the smell type (dead code, god class, feature envy, etc.)
+  * Mentions class names, method names, or function names
+  * Mentions line numbers
+  * Provides any technical details about what issues exist
 
 ## Your Task
 
 For each hint:
 1. Check if it violates the rules above
-2. If OK, keep it unchanged
-3. If problematic, generate a new one that fixes the issues
+2. If OK, return true and leave the new field empty
+3. If problematic, return false, explain the issue, and generate a new hint that fixes it
 
-When regenerating, use varied phrasing and different verbs.
+When regenerating, use varied phrasing and different verbs to increase diversity.
 
 ## Output Format
 
 <targeted_ok>true or false</targeted_ok>
+<targeted_reason>If false, explain what rule was violated. If true, write "none".</targeted_reason>
 <targeted_new>New hint if false, otherwise leave empty</targeted_new>
+
 <guided_ok>true or false</guided_ok>
+<guided_reason>If false, explain what rule was violated. If true, write "none".</guided_reason>
 <guided_new>New hint if false, otherwise leave empty</guided_new>
+
 <open_ok>true or false</open_ok>
+<open_reason>If false, explain what rule was violated. If true, write "none".</open_reason>
 <open_new>New hint if false, otherwise leave empty</open_new>
 """
 
@@ -148,7 +171,7 @@ def validate_and_regenerate_entry(
 ) -> Dict[str, Any]:
     """Validate and regenerate instructions in a single LLM call.
 
-    Returns dict with: targeted_ok, targeted_new, guided_ok, guided_new, open_ok, open_new, usage
+    Returns dict with: targeted_ok, targeted_reason, targeted_new, guided_ok, guided_reason, guided_new, open_ok, open_reason, open_new, usage
     """
     smell_type = entry.get("type", "")
     smell_desc = smell_types.get(smell_type, {}).get("desc", "")
@@ -182,10 +205,13 @@ def validate_and_regenerate_entry(
 
     return {
         "targeted_ok": (_parse_xml_tag(raw, "targeted_ok") or "").strip().lower() == "true",
+        "targeted_reason": _parse_xml_tag(raw, "targeted_reason") or "",
         "targeted_new": _parse_xml_tag(raw, "targeted_new") or "",
         "guided_ok": (_parse_xml_tag(raw, "guided_ok") or "").strip().lower() == "true",
+        "guided_reason": _parse_xml_tag(raw, "guided_reason") or "",
         "guided_new": _parse_xml_tag(raw, "guided_new") or "",
         "open_ok": (_parse_xml_tag(raw, "open_ok") or "").strip().lower() == "true",
+        "open_reason": _parse_xml_tag(raw, "open_reason") or "",
         "open_new": _parse_xml_tag(raw, "open_new") or "",
         "usage": result.get("usage", {}),
     }
@@ -292,14 +318,17 @@ def main():
             print(f"    PASS")
             continue
 
-        # Report failures
+        # Report failures with reasons
         total_failed += 1
         if not result["targeted_ok"]:
-            print(f"    targeted FAIL - regenerated")
+            reason = result.get("targeted_reason", "unknown")
+            print(f"    targeted FAIL: {reason}")
         if not result["guided_ok"]:
-            print(f"    guided FAIL - regenerated")
+            reason = result.get("guided_reason", "unknown")
+            print(f"    guided FAIL: {reason}")
         if not result["open_ok"]:
-            print(f"    open FAIL - regenerated")
+            reason = result.get("open_reason", "unknown")
+            print(f"    open FAIL: {reason}")
 
         if args.dry_run:
             continue
