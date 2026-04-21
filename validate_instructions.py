@@ -97,7 +97,9 @@ When in doubt, ACCEPT the hint rather than reject it.
 **hint_targeted**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST specify the smell type and exact location (file, class, method).
-- REJECT ONLY if it:
+- Can mention the smell type name (e.g., "dead code", "god class", "feature envy"), but REJECT if it:
+  * Describes WHY the smell exists or what caused it
+  * Describes HOW the smell manifests (the specific pattern or structure)
   * Describes implementation details (how the code works internally)
   * Describes mechanisms (the technical approach or pattern used)
   * Describes architecture (system design or relationships between components)
@@ -106,13 +108,14 @@ When in doubt, ACCEPT the hint rather than reject it.
 
 **hint_guided**:
 - Should be a concise, professional task description (1-2 sentences).
-- MUST specify ONLY the smell type and the single main file path.
-- REJECT ONLY if it:
+- MUST specify the smell type and the single main file path.
+- Can mention the smell type name (e.g., "dead code", "god class", "feature envy"), but REJECT if it:
+  * Describes WHY the smell exists or what caused it
+  * Describes HOW the smell manifests (the specific pattern or structure)
   * Mentions other files beyond the main file
   * Mentions class names or method names (agent should discover these)
   * Mentions line numbers
   * Describes implementation details
-  * Describes how the smell manifests (the specific pattern or structure)
 
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
