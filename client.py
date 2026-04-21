@@ -385,9 +385,9 @@ class ClaudeCodeClient(CommandAgentClient):
         if base_url:
             env_block["ANTHROPIC_BASE_URL"] = base_url
 
-        with open(settings_file, "w") as f:
-            json.dump(settings, f, indent=2)
-        print(f"[ClaudeCodeClient] Wrote claude settings to {settings_file}")
+        # with open(settings_file, "w") as f:
+        #     json.dump(settings, f, indent=2)
+        # print(f"[ClaudeCodeClient] Wrote claude settings to {settings_file}")
 
     def _agent_command(self, model=None):
         model = model or self.model

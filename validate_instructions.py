@@ -41,6 +41,10 @@ def _get_guided(entry: Dict) -> str:
     return entry.get("hint_guided") or entry.get("hard") or ""
 
 
+def _get_open(entry: Dict) -> str:
+    return entry.get("hint_open") or ""
+
+
 def _set_targeted(entry: Dict, value: str) -> None:
     if "hint_targeted" in entry:
         entry["hint_targeted"] = value
@@ -55,25 +59,35 @@ def _set_guided(entry: Dict, value: str) -> None:
         entry["hard"] = value
 
 
+def _set_open(entry: Dict, value: str) -> None:
+    entry["hint_open"] = value
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
-VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benchmark entry has two instruction fields that will be given to a coding agent as task descriptions.
+VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benchmark entry has three instruction fields that will be given to a coding agent as task descriptions.
 
 ## Rules
 
-**hint_targeted** (also called "easy"):
-- MUST mention the smell type (e.g. "feature envy", "god class").
-- MUST mention at least one specific file path where the smell lives.
-- MUST mention the class name and/or method name where the smell is centered.
-- Should read as a natural-language task asking the agent to find and refactor the smell.
+**hint_targeted**:
+- Should be a concise, professional task description (1-2 sentences).
+- MUST specify the smell type and exact location (file, class, method).
+- MUST use varied phrasing (not a fixed template like "Refactor the X in Y").
+- MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
 
-**hint_guided** (also called "hard"):
-- MUST mention the smell type.
-- MUST mention ONLY the single main file where the smell is centered.
-- MUST NOT reveal multiple file paths, class names, method names, or line numbers — the agent must discover those itself.
-- Should read as a natural-language task asking the agent to find and refactor the smell.
+**hint_guided**:
+- Should be a concise, professional task description (1-2 sentences).
+- MUST specify ONLY the smell type and the single main file path.
+- MUST use varied phrasing (not a fixed template).
+- MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
+
+**hint_open**:
+- Should be a concise, professional task description (1-2 sentences).
+- MUST ask to review/improve code quality in the specified file(s).
+- MUST use varied phrasing (not a fixed template).
+- MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Entry to validate
 
@@ -87,6 +101,9 @@ VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benc
 ### hint_guided value:
 {hint_guided}
 
+### hint_open value:
+{hint_open}
+
 ## Your Task
 
 Check each field against its rules. Return your result using XML tags:
@@ -95,12 +112,14 @@ Check each field against its rules. Return your result using XML tags:
 <targeted_issues>If false, explain what is wrong. If true, write "none".</targeted_issues>
 <guided_ok>true or false</guided_ok>
 <guided_issues>If false, explain what is wrong. If true, write "none".</guided_issues>
+<open_ok>true or false</open_ok>
+<open_issues>If false, explain what is wrong. If true, write "none".</open_issues>
 """
 
 
 REGENERATE_PROMPT = """You are a benchmark author for a code-smell detection benchmark.
 
-Given the following smell injection information, write TWO task instructions for a coding agent.
+Given the following smell injection information, write THREE task instructions for a coding agent at different difficulty levels.
 
 ## Smell Info
 - **Smell type**: {smell_type}
@@ -116,15 +135,22 @@ Given the following smell injection information, write TWO task instructions for
 ## Instructions to write
 
 ### hint_targeted
-A natural-language task description that tells the agent to identify and refactor the smell.
-MUST include: the smell type, the specific file path, class name (if applicable), and method name (if applicable).
-Write freely — do NOT follow a fixed template. Be specific enough that the agent knows exactly where to look.
+A concise, professional task description (1-2 sentences).
+MUST specify the smell type and exact location (file, class, method).
+Use varied, natural phrasing - do NOT follow a fixed template.
+Do NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
 
 ### hint_guided
-A natural-language task description that tells the agent to identify and refactor the smell.
-MUST include ONLY: the smell type and the related file paths.
-Do NOT reveal specific class names, method names, or line numbers — the agent must discover those itself.
-Write freely — do NOT follow a fixed template.
+A concise, professional task description (1-2 sentences).
+MUST specify ONLY the smell type and the single main file path.
+Use varied, natural phrasing - do NOT follow a fixed template.
+Do NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
+
+### hint_open
+A concise, professional task description (1-2 sentences).
+Ask to review and improve code quality in the specified file(s).
+Use varied, natural phrasing - do NOT follow a fixed template.
+Do NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Output Format
 
@@ -135,6 +161,10 @@ Your targeted instruction here.
 <hint_guided>
 Your guided instruction here.
 </hint_guided>
+
+<hint_open>
+Your open instruction here.
+</hint_open>
 """
 
 
@@ -160,7 +190,7 @@ def validate_entry(
 ) -> Dict[str, Any]:
     """Validate one entry's instructions via LLM.
 
-    Returns dict with keys: targeted_ok, targeted_issues, guided_ok, guided_issues.
+    Returns dict with keys: targeted_ok, targeted_issues, guided_ok, guided_issues, open_ok, open_issues.
     """
     smell_type = entry.get("type", "")
     smell_function = entry.get("smell_function", [])
@@ -172,6 +202,7 @@ def validate_entry(
         changed_files=", ".join(changed_files),
         hint_targeted=_get_targeted(entry),
         hint_guided=_get_guided(entry),
+        hint_open=_get_open(entry),
     )
 
     result = call_llm(prompt, model=model, base_url=base_url)
@@ -179,12 +210,15 @@ def validate_entry(
 
     targeted_ok = _parse_xml_tag(raw, "targeted_ok") or ""
     guided_ok = _parse_xml_tag(raw, "guided_ok") or ""
+    open_ok = _parse_xml_tag(raw, "open_ok") or ""
 
     return {
         "targeted_ok": targeted_ok.strip().lower() == "true",
         "targeted_issues": _parse_xml_tag(raw, "targeted_issues") or "",
         "guided_ok": guided_ok.strip().lower() == "true",
         "guided_issues": _parse_xml_tag(raw, "guided_issues") or "",
+        "open_ok": open_ok.strip().lower() == "true",
+        "open_issues": _parse_xml_tag(raw, "open_issues") or "",
         "usage": result.get("usage", {}),
     }
 
@@ -194,10 +228,10 @@ def regenerate_instructions(
     smell_types: Dict[str, Dict],
     model: str,
     base_url: Optional[str] = None,
-) -> Tuple[str, str, Dict]:
-    """Regenerate both instructions for an entry.
+) -> Tuple[str, str, str, Dict]:
+    """Regenerate all three instructions for an entry.
 
-    Returns (hint_targeted, hint_guided, usage).
+    Returns (hint_targeted, hint_guided, hint_open, usage).
     """
     smell_type = entry.get("type", "")
     smell_desc = smell_types.get(smell_type, {}).get("desc", "")
@@ -228,8 +262,9 @@ def regenerate_instructions(
 
     hint_targeted = _parse_xml_tag(raw, "hint_targeted") or ""
     hint_guided = _parse_xml_tag(raw, "hint_guided") or ""
+    hint_open = _parse_xml_tag(raw, "hint_open") or ""
 
-    return hint_targeted, hint_guided, result.get("usage", {})
+    return hint_targeted, hint_guided, hint_open, result.get("usage", {})
 
 
 def _build_settings_from_repo_spec(repo_spec: Dict, repo_name: str = "") -> Dict:
@@ -314,25 +349,29 @@ def main():
 
         targeted = _get_targeted(entry)
         guided = _get_guided(entry)
+        open_hint = _get_open(entry)
 
-        if not targeted and not guided:
+        if not targeted and not guided and not open_hint:
             print(f"  {label}: SKIP (no instruction fields)")
             continue
 
         # --- Force mode: skip validation, regenerate all ---
         if args.force:
             print(f"  {label}: FORCE regenerate ...")
-            new_targeted, new_guided, usage = regenerate_instructions(
+            new_targeted, new_guided, new_open, usage = regenerate_instructions(
                 entry, smell_types_map, model=args.model, base_url=args.base_url,
             )
             if new_targeted:
                 _set_targeted(entry, new_targeted)
             if new_guided:
                 _set_guided(entry, new_guided)
+            if new_open:
+                _set_open(entry, new_open)
             modified = True
             total_regenerated += 1
             print(f"    targeted: {new_targeted[:80]}...")
             print(f"    guided:   {new_guided[:80]}...")
+            print(f"    open:     {new_open[:80]}...")
             continue
 
         # --- Validate ---
@@ -340,7 +379,7 @@ def main():
         total_validated += 1
         vresult = validate_entry(entry, model=args.model, base_url=args.base_url)
 
-        if vresult["targeted_ok"] and vresult["guided_ok"]:
+        if vresult["targeted_ok"] and vresult["guided_ok"] and vresult["open_ok"]:
             print(f"    PASS")
             continue
 
@@ -349,13 +388,15 @@ def main():
             print(f"    targeted FAIL: {vresult['targeted_issues']}")
         if not vresult["guided_ok"]:
             print(f"    guided FAIL: {vresult['guided_issues']}")
+        if not vresult["open_ok"]:
+            print(f"    open FAIL: {vresult['open_issues']}")
 
         if args.dry_run:
             continue
 
         # --- Regenerate ---
         print(f"    Regenerating ...")
-        new_targeted, new_guided, usage = regenerate_instructions(
+        new_targeted, new_guided, new_open, usage = regenerate_instructions(
             entry, smell_types_map, model=args.model, base_url=args.base_url,
         )
         if new_targeted:
@@ -364,6 +405,9 @@ def main():
         if new_guided:
             _set_guided(entry, new_guided)
             print(f"    new guided:   {new_guided[:80]}...")
+        if new_open:
+            _set_open(entry, new_open)
+            print(f"    new open:     {new_open[:80]}...")
         modified = True
         total_regenerated += 1
 

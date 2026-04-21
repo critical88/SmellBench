@@ -32,9 +32,10 @@ MAX_FIX_RETRIES = 1
 MAX_CANDIDATE_RETRIES = 3
 DIFFICULTY_LEVELS = ( "easy", "medium", "hard")
 
-# Instruction levels for evaluation:
-# - "targeted": give smell type + precise location (file, class, method)
-# - "guided":   give smell type + related file paths only, agent finds the rest
+# Instruction levels for evaluation (each with varying information disclosure):
+# - "targeted": smell type + exact location (file, class, method), no implementation details
+# - "guided":   smell type + single main file only, no class/method names or other files
+# - "open":     file path(s) only, no smell type or specific locations revealed
 INSTRUCTION_LEVELS = ("targeted", "guided", "open")
 
 # Difficulty amplifiers appended to the template for hard/expert levels

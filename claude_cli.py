@@ -93,7 +93,7 @@ def extract_usage(envelope: dict) -> Dict:
 
 
 def call_claude_cli(
-    prompt: str, cwd: str, timeout: int = 1200
+    prompt: str, cwd: str, timeout: int = 1200, model: str = ""
 ) -> Tuple[str, List[Dict], Dict]:
     """Call claude CLI with streaming output, trajectory capture, and usage tracking.
 
@@ -101,6 +101,8 @@ def call_claude_cli(
         (result_text, trajectory, usage_dict)
     """
     command = shlex.split(CLAUDE_CMD_TEMPLATE)
+    if model:
+        command.extend(["--model", model])
     agent_cmd = shutil.which(command[0])
     if agent_cmd is None:
         raise RuntimeError("claude CLI not found in PATH")

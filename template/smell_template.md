@@ -66,9 +66,9 @@ Requirements:
 Format:
 ```json
 {
-  "hint_targeted": "A natural-language task description that tells the agent to identify and refactor a specific code smell. Must include: the smell type, the specific file path, class name (if applicable), and method name (if applicable). Write freely — do NOT follow a fixed template.",
-  "hint_guided": "A natural-language task description that tells the agent to identify and refactor a specific code smell. Must include ONLY: the smell type and the single main file where the smell is centered. Do NOT reveal multiple file paths, class names, method names, or line numbers — the agent must discover those itself. Write freely — do NOT follow a fixed template.",
-  "hint_open": "A natural-language task description that tells the agent to find and refactor code smells in a given file. Must include ONLY: the file path(s) involved. Do NOT reveal the smell type, class names, method names, or line numbers — the agent must discover everything itself. Write freely — do NOT follow a fixed template.",
+  "hint_targeted": "A concise, professional task description (1-2 sentences) that specifies the smell type and exact location (file, class, method). Use varied phrasing - do NOT follow a fixed template. MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.",
+  "hint_guided": "A concise, professional task description (1-2 sentences) that specifies ONLY the smell type and the single main file. Use varied phrasing - do NOT follow a fixed template. MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.",
+  "hint_open": "A concise, professional task description (1-2 sentences) asking to review and improve code quality in the specified file(s). Use varied phrasing - do NOT follow a fixed template. MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [
     ["<absolute_file_path>", "<class name or null>", "<function_name>"],
