@@ -86,6 +86,7 @@ VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benc
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST focus on REFACTORING - use varied refactoring verbs (refactor, clean up, simplify, reorganize, restructure, optimize).
+- REJECT if it uses vague words like "review", "improve", "check", "examine" - these are too ambiguous.
 - MUST be COMPLETELY GENERIC - only mention file path(s) and a generic refactoring request.
 - MUST use varied, natural phrasing - REJECT if it's too template-like.
 - ABSOLUTELY MUST NOT hint at the problem type using words like: design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, etc.
@@ -137,7 +138,9 @@ Given the following smell injection information, write THREE task instructions f
 ## CRITICAL: Diversity Requirements
 Generate instructions with HIGH VARIABILITY. Each instruction should feel unique and natural.
 
-**Vary your verb choices** - randomly pick from: refactor, clean up, eliminate, remove, address, fix, resolve, improve, simplify, reorganize, restructure, extract, consolidate, etc.
+**For hint_targeted and hint_guided** - vary your verb choices: refactor, clean up, eliminate, remove, address, fix, resolve, simplify, reorganize, restructure, extract, consolidate, etc.
+
+**For hint_open** - ONLY use explicit refactoring verbs: refactor, clean up, simplify, reorganize, restructure, optimize. DO NOT use vague verbs like "improve", "review", "check", "examine".
 
 **Vary your sentence structure** - use different patterns:
 - Imperative: "Refactor the X in Y"
