@@ -74,19 +74,19 @@ VALIDATE_PROMPT = """You are a QA reviewer for a code-smell benchmark. Each benc
 **hint_targeted**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST specify the smell type and exact location (file, class, method).
-- MUST use varied phrasing (not a fixed template like "Refactor the X in Y").
+- MUST use varied, natural phrasing - REJECT if it follows a formulaic pattern like "Refactor the X in Y" or "Address the X in Y". Instructions should feel unique and natural.
 - MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
 
 **hint_guided**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST specify ONLY the smell type and the single main file path.
-- MUST use varied phrasing (not a fixed template).
+- MUST use varied, natural phrasing - REJECT if it's too formulaic or template-like. Each instruction should feel different.
 - MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
 
 **hint_open**:
 - Should be a concise, professional task description (1-2 sentences).
 - MUST ask to review/improve code quality in the specified file(s).
-- MUST use varied phrasing (not a fixed template).
+- MUST use varied, natural phrasing - REJECT if it's too generic or template-like (e.g., "Review and refactor code smells in X").
 - MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Entry to validate
@@ -132,24 +132,38 @@ Given the following smell injection information, write THREE task instructions f
 {smell_diff}
 ```
 
+## CRITICAL: Diversity Requirements
+Generate instructions with HIGH VARIABILITY. Each instruction should feel unique and natural.
+
+**Vary your verb choices** - randomly pick from: refactor, clean up, eliminate, remove, address, fix, resolve, improve, simplify, reorganize, restructure, extract, consolidate, etc.
+
+**Vary your sentence structure** - use different patterns:
+- Imperative: "Refactor the X in Y"
+- Request: "Please clean up X in Y"
+- Question: "Can you address X in Y?"
+- Observation: "The X in Y needs refactoring"
+- Task assignment: "We need to eliminate X from Y"
+
+**Vary your phrasing style** - be creative with how you describe the same information.
+
 ## Instructions to write
 
 ### hint_targeted
 A concise, professional task description (1-2 sentences).
 MUST specify the smell type and exact location (file, class, method).
-Use varied, natural phrasing - do NOT follow a fixed template.
+Use VARIED phrasing - do NOT use formulaic patterns like "Refactor the [smell] in [location]" every time.
 Do NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.
 
 ### hint_guided
 A concise, professional task description (1-2 sentences).
 MUST specify ONLY the smell type and the single main file path.
-Use varied, natural phrasing - do NOT follow a fixed template.
+Use VARIED phrasing - explore different ways to ask for the same thing.
 Do NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.
 
 ### hint_open
 A concise, professional task description (1-2 sentences).
 Ask to review and improve code quality in the specified file(s).
-Use varied, natural phrasing - do NOT follow a fixed template.
+Use VARIED phrasing - make each instruction feel unique.
 Do NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.
 
 ## Output Format

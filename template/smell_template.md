@@ -63,12 +63,16 @@ Requirements:
 - Place JSON AFTER all code
 - All fields MUST be written in English
 
+## CRITICAL: Write DIVERSE, VARIED instructions
+
+Each hint should feel UNIQUE and NATURAL. Use different verbs (refactor/clean up/eliminate/remove/address/fix/resolve/improve/simplify/reorganize/restructure/extract/consolidate) and different sentence structures (imperative/request/question/observation/task assignment).
+
 Format:
 ```json
 {
-  "hint_targeted": "A concise, professional task description (1-2 sentences) that specifies the smell type and exact location (file, class, method). Use varied phrasing - do NOT follow a fixed template. MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.",
-  "hint_guided": "A concise, professional task description (1-2 sentences) that specifies ONLY the smell type and the single main file. Use varied phrasing - do NOT follow a fixed template. MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.",
-  "hint_open": "A concise, professional task description (1-2 sentences) asking to review and improve code quality in the specified file(s). Use varied phrasing - do NOT follow a fixed template. MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.",
+  "hint_targeted": "A concise, professional task description (1-2 sentences) that specifies the smell type and exact location (file, class, method). Use HIGHLY VARIED phrasing - avoid formulaic patterns. Randomly vary your verbs and sentence structure. MUST NOT describe implementation details, mechanisms, architecture, what the code does, or reveal multiple affected files.",
+  "hint_guided": "A concise, professional task description (1-2 sentences) that specifies ONLY the smell type and the single main file. Use HIGHLY VARIED phrasing - make each one feel different. MUST NOT mention other files, class/method names, line numbers, implementation details, or describe how the smell manifests.",
+  "hint_open": "A concise, professional task description (1-2 sentences) asking to review and improve code quality in the specified file(s). Use HIGHLY VARIED phrasing - be creative. MUST NOT reveal smell types, class/method names, line numbers, or any technical details about what issues exist.",
   "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
   "test_functions": [
     ["<absolute_file_path>", "<class name or null>", "<function_name>"],
