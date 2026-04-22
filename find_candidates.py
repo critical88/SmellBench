@@ -151,6 +151,7 @@ def process_repo(
     output_dir: str,
     force: bool = False,
     timeout: int = 1200,
+    model: str = "claude-sonnet-4-5-20250929",
 ) -> bool:
     """Find candidates for one repo. Returns True if successful."""
     repo_path = os.path.join(project_dir, repo_name)
@@ -202,7 +203,7 @@ def process_repo(
 
         try:
             response_text, trajectory, usage = call_claude_cli(
-                prompt, cwd=repo_path, timeout=timeout
+                prompt, cwd=repo_path, timeout=timeout, model=model
             )
         except Exception as e:
             print(f"  Claude CLI call failed for {st}: {e}")
@@ -271,6 +272,10 @@ def main():
         "--timeout", type=int, default=600,
         help="Timeout in seconds for Claude CLI call (default: 600).",
     )
+    parser.add_argument(
+        "--model", default="claude-sonnet-4-5-20250929",
+        help="Claude model to use (default: claude-sonnet-4-5-20250929).",
+    )
     args = parser.parse_args()
 
     # Load configs
@@ -311,6 +316,7 @@ def main():
             output_dir=args.output_dir,
             force=args.force,
             timeout=args.timeout,
+            model=args.model,
         )
         results[repo_name] = "OK" if ok else "FAILED"
         print()

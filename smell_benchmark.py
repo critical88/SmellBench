@@ -1001,6 +1001,7 @@ def main(args):
                 smell_types=smell_types,
                 project_dir=project_dir,
                 output_dir=output_dir,
+                model=args.agent_model
             )
             # Reload after generation
             if os.path.exists(candidates_path):
