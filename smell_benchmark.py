@@ -503,6 +503,41 @@ def build_function_key(module_path: str, class_name: Optional[str], func_name: s
     return f"{module_path}:{func_name}"
 
 
+def normalize_function_paths(
+    functions: List,
+    repo_path: str,
+    verbose: bool = True,
+) -> List:
+    """Normalize absolute file paths in function entries to relative paths.
+
+    Args:
+        functions: List of function entries, each in format [file_path, class_name, func_name, ...]
+        repo_path: Repository root path for computing relative paths
+        verbose: Whether to print normalization messages
+
+    Returns:
+        List of function entries with normalized (relative) paths
+    """
+    normalized = []
+    for func_entry in functions:
+        if isinstance(func_entry, list) and len(func_entry) >= 3:
+            entry = list(func_entry)
+            file_path = entry[0]
+            if os.path.isabs(file_path):
+                try:
+                    entry[0] = os.path.relpath(file_path, repo_path)
+                    if verbose:
+                        print(f"  Normalized path: {file_path} -> {entry[0]}")
+                except ValueError:
+                    # If relpath fails (e.g., different drives on Windows), keep original
+                    if verbose:
+                        print(f"  Warning: failed to normalize path {file_path}")
+            normalized.append(entry)
+        else:
+            normalized.append(func_entry)
+    return normalized
+
+
 def find_tests_for_functions(
     test_functions: List,
     mapping: Dict,
@@ -524,22 +559,34 @@ def find_tests_for_functions(
         module_path = file_path_to_module(file_path, src_path, repo_path)
         key = build_function_key(module_path, class_name, func_name)
 
+        # DEBUG: log the conversion
+        print(f"    [DEBUG] Converting function entry:")
+        print(f"      file_path: {file_path}")
+        print(f"      class_name: {repr(class_name)}")
+        print(f"      func_name: {func_name}")
+        print(f"      -> module_path: {module_path}")
+        print(f"      -> key: {key}")
+
         # Look up in mapping
         func_info = functions_map.get(key)
         if func_info is None:
             # Try without class (in case class_name is wrong or None mismatch)
             alt_key = build_function_key(module_path, None, func_name)
+            print(f"      -> trying alt_key: {alt_key}")
             func_info = functions_map.get(alt_key)
         if func_info is None:
             # Fuzzy match: search for keys ending with the function name
             for k, v in functions_map.items():
                 if k.endswith(f".{func_name}") or k.endswith(f":{func_name}"):
+                    print(f"      -> fuzzy matched: {k}")
                     func_info = v
                     break
 
         if func_info is None:
             print(f"  Warning: no test mapping found for {key}")
             continue
+        else:
+            print(f"      -> found {len(func_info.get('tests', []))} tests")
 
         tests = func_info.get("tests", [])
         if len(tests) > max_tests_per_func:
@@ -689,9 +736,23 @@ def process_one_smell(
     if test_functions and not isinstance(test_functions[0], list):
         test_functions = [test_functions]
 
+    # Normalize absolute paths to relative paths (relative to repo_path)
+    # This is needed because agent may return absolute paths
+
+    # Normalize smell_function (single list: [file_path, class_name, method_name])
+    if smell_function and len(smell_function) >= 1 and os.path.isabs(smell_function[0]):
+        try:
+            smell_function = [os.path.relpath(smell_function[0], repo_path)] + smell_function[1:]
+            print(f"  Normalized smell_function path: -> {smell_function[0]}")
+        except ValueError:
+            print(f"  Warning: failed to normalize smell_function path {smell_function[0]}")
+
+    # Normalize test_functions (list of lists)
+    normalized_test_functions = normalize_function_paths(test_functions, repo_path)
+
     # Find mapped tests
     testsuites = find_tests_for_functions(
-        test_functions, mapping, src_path, repo_path
+        normalized_test_functions, mapping, src_path, repo_path
     )
 
     # Record the attempt even if no tests found
@@ -800,12 +861,19 @@ def process_one_smell(
             hint_open = parsed.get("hint_open", hint_open)
             new_sf = parsed.get("smell_function", [])
             if new_sf:
+                # Normalize smell_function path
+                if len(new_sf) >= 1 and os.path.isabs(new_sf[0]):
+                    try:
+                        new_sf = [os.path.relpath(new_sf[0], repo_path)] + new_sf[1:]
+                    except ValueError:
+                        pass
                 smell_function = new_sf
             new_tf = parsed.get("test_functions", [])
             if new_tf:
                 if not isinstance(new_tf[0], list):
                     new_tf = [new_tf]
-                test_functions = new_tf
+                # Normalize paths in the updated test_functions as well
+                test_functions = normalize_function_paths(new_tf, repo_path, verbose=False)
 
     else:
         # Loop finished without break => all retries exhausted
@@ -816,27 +884,10 @@ def process_one_smell(
     h = hashcode(smell_content)
     instance_id = f"{repo_name}-{smell_type_slug}-{h}"
 
-    # Normalize file paths to be relative to project/{repo_name}
-    def _normalize_funcs(funcs):
-        normalized = []
-        for func_entry in funcs:
-            entry = list(func_entry)
-            fp = entry[0]
-            if os.path.isabs(fp):
-                try:
-                    entry[0] = os.path.relpath(fp, repo_path)
-                except ValueError:
-                    pass
-            normalized.append(entry)
-        return normalized
-
+    # smell_function and test_functions are already normalized to relative paths above,
+    # so we can use them directly
     normalized_smell_function = list(smell_function) if smell_function else []
-    if normalized_smell_function and os.path.isabs(normalized_smell_function[0]):
-        try:
-            normalized_smell_function[0] = os.path.relpath(normalized_smell_function[0], repo_path)
-        except ValueError:
-            pass
-    normalized_test_functions = _normalize_funcs(test_functions)
+    normalized_test_functions = list(test_functions) if test_functions else []
 
     reset_repository(repo_path, commit_id)
 
