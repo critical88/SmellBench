@@ -88,8 +88,11 @@ Format:
 - Format: `[absolute_file_path, class_name_or_null, function_name_or_null]` (NOT a nested array).
 
 ### test_functions rules (CRITICAL):
+- **IMPORTANT**: List **SOURCE CODE functions/methods that were MODIFIED** by the smell injection, NOT test case functions.
+- These should be functions in the **production code** , NOT in test files .
 - Each entry MUST be at **method/function level** — never a class or module.
-- For class-level smells (e.g., god_classes, interface_segregation), list the specific **methods that were modified** or whose call chains are affected by the injection.
+- For class-level smells (e.g., god_classes, interface_segregation), list the specific **methods in the source code that were modified** or whose implementations are affected by the injection.
 - The call chain of each listed function should **cover the injected changes** — i.e., exercising these functions should trigger the smell-related code paths.
-- If the injection modifies multiple methods across files, list **all of them** — the more coverage the better.
-- Format: each entry is `[absolute_file_path, class_name_or_null, function_name]`.
+- If the injection modifies multiple methods across files, list **all of them** from the source code — the more coverage the better.
+- Format: each entry is `[absolute_file_path, class_name_or_null, function_name]` where file_path points to SOURCE CODE files.
+- Example: `["src/jinja2/runtime.py", null, "new_context"]` NOT `["tests/test_api.py", "TestClass", "test_something"]`
