@@ -359,6 +359,9 @@ def save_attempt(
     test_passed: bool,
     usage: Dict,
     parsed_json: Optional[Dict] = None,
+    candidate_attempt: int = 0,
+    testsuites_found: bool = True,
+    testsuites: Optional[List[str]] = None,
 ):
     """Persist all artifacts for one attempt into the given directory."""
     os.makedirs(attempt_dir, exist_ok=True)
@@ -377,6 +380,9 @@ def save_attempt(
         "test_passed": test_passed,
         "usage": usage,
         "event_count": len(trajectory),
+        "candidate_attempt": candidate_attempt,
+        "testsuites_found": testsuites_found,
+        "testsuites": testsuites or [],
     }
     if parsed_json is not None:
         meta["parsed_json"] = parsed_json
@@ -630,6 +636,7 @@ def process_one_smell(
     base_url: Optional[str] = None,
     agent: str = "claude_code",
     agent_model: str = "claude-opus-4-6",
+    candidate_attempt: int = 0,
 ) -> Optional[Dict]:
     """Process a single (repo, smell_type) combination.
 
@@ -644,8 +651,8 @@ def process_one_smell(
     src_path = repo_spec.get("src_path", repo_name)
     smell_type_slug = smell_type.replace(" ", "_")
 
-    # Per-smell output directory: {output_dir}/{smell_type_slug}/{difficulty}/
-    smell_dir = os.path.join(output_dir, smell_type_slug, difficulty)
+    # Per-smell output directory: {output_dir}/{smell_type_slug}/{difficulty}/candidate_{candidate_attempt}/
+    smell_dir = os.path.join(output_dir, smell_type_slug, difficulty, f"candidate_{candidate_attempt}")
     os.makedirs(smell_dir, exist_ok=True)
 
     # --- Attempt 0: initial agent call ---
@@ -686,8 +693,26 @@ def process_one_smell(
     testsuites = find_tests_for_functions(
         test_functions, mapping, src_path, repo_path
     )
+
+    # Record the attempt even if no tests found
+    attempt_label = f"attempt_0_no_tests"
+    attempt_dir = os.path.join(smell_dir, attempt_label)
+
     if not testsuites:
         print(f"  No tests found for modified functions in {repo_name} / {smell_type}")
+        # Save this attempt with testsuites_found=False
+        save_attempt(
+            attempt_dir=attempt_dir,
+            trajectory=trajectory,
+            smell_content=smell_content,
+            test_output="No tests found for modified functions",
+            test_passed=False,
+            usage=usage,
+            parsed_json=parsed,
+            candidate_attempt=candidate_attempt,
+            testsuites_found=False,
+            testsuites=[],
+        )
         reset_repository(repo_path, commit_id)
         return None
 
@@ -717,6 +742,9 @@ def process_one_smell(
             test_passed=test_passed,
             usage=usage,
             parsed_json=parsed,
+            candidate_attempt=candidate_attempt,
+            testsuites_found=True,
+            testsuites=testsuites,
         )
 
         if test_passed:
@@ -1127,6 +1155,7 @@ def main(args):
                     base_url=args.base_url,
                     agent=args.agent,
                     agent_model=args.agent_model,
+                    candidate_attempt=candidate_attempt,
                 )
 
                 if result:

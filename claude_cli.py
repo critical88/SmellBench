@@ -110,6 +110,7 @@ def call_claude_cli(
 
     trajectory: List[Dict] = []
     result_envelope: Optional[Dict] = None
+    accumulated_usage: Dict[str, Any] = {}
 
     process = subprocess.Popen(
         command,
@@ -146,6 +147,16 @@ def call_claude_cli(
             event = json.loads(line)
             trajectory.append(event)
             _print_event_info(event)
+
+            # Accumulate usage from all events that have it
+            if "usage" in event:
+                event_usage = extract_usage(event)
+                for key, value in event_usage.items():
+                    if key in accumulated_usage:
+                        accumulated_usage[key] += value
+                    else:
+                        accumulated_usage[key] = value
+
             if event.get("type") == "result":
                 result_envelope = event
         except json.JSONDecodeError:
@@ -160,7 +171,9 @@ def call_claude_cli(
         )
 
     result_text = result_envelope.get("result", "") if result_envelope else ""
-    usage = extract_usage(result_envelope) if result_envelope else {}
+
+    # Use accumulated usage from all events
+    usage = accumulated_usage if accumulated_usage else {}
 
     return result_text, trajectory, usage
 
