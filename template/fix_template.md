@@ -1,8 +1,22 @@
 You previously injected a "[SMELL_TYPE]" code smell into this codebase.
 The changes you made caused the following unit tests to FAIL.
 
-Your task: fix the code so that all tests pass while KEEPING the injected code smell intact.
-The smell must still be present and non-trivial after your fix.
+⚠️ **CRITICAL**: Your task is to fix the TESTS, NOT to remove the smell!
+
+**Your task**: Fix the code so that all tests pass while **KEEPING the injected code smell intact**.
+- The smell must still be present and non-trivial after your fix
+- You are fixing **test failures caused by your injection**, NOT refactoring the smell away
+- Think of it as: "make my smell injection more robust so it doesn't break tests"
+
+**DO NOT**:
+- Remove or refactor the smell you injected
+- "Clean up" the code smell
+- Make the code better quality — keep the smell as is
+
+**DO**:
+- Fix any syntax errors, import errors, or runtime errors
+- Adjust test-related code if needed
+- Make minimal changes to pass tests while preserving the smell pattern
 
 Do NOT run any tests yourself — testing is handled externally.
 
@@ -20,11 +34,12 @@ Do NOT run any tests yourself — testing is handled externally.
 ```
 
 ## Requirements
-1. Fix the failing tests while preserving the code smell injection
+1. **Fix the failing tests while preserving the code smell injection** — the smell pattern must remain
 2. The code must compile/run correctly
-3. Do NOT remove the smell — only fix the breakage
-4. Do NOT create new files
-5. Do NOT run any test commands (pytest, unittest, etc.)
+3. **DO NOT remove or refactor the smell** — you are fixing test failures, not improving code quality
+4. DO NOT create new files
+5. DO NOT run any test commands (pytest, unittest, etc.)
+6. Make **minimal changes** — only fix what's broken, keep the smell as you originally injected it
 
 After making your fixes, output the same JSON format as before:
 ```json
