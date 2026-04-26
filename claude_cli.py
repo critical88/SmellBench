@@ -322,7 +322,7 @@ def _call_openai(
 def call_llm(
     prompt: str,
     model: str = "anthropic/claude-sonnet-4-5-20250929",
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
     base_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call an LLM API. Model format: 'provider/model-name'.
