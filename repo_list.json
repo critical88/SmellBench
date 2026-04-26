@@ -13,6 +13,7 @@
         "commit_id": "c3d60fc8393f3ca3306b8ce8b6453d43737e3d90",
         "src_path": "numpy",
         "submodule": true,
+        "selected": true,
         "conda_env_create": "conda env create -f environment.yml",
         "build_cmd": [
                         "python -m pip install -r requirements/test_requirements.txt",
@@ -82,7 +83,7 @@
         "url": "https://github.com/matplotlib/matplotlib",
         "commit_id": "1392cbe3c79cdb93f9282747841d648770f60249",
         "src_path": "lib/matplotlib",
-        "selected": true,
+        "selected": false,
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": [
                         "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
