@@ -11,6 +11,7 @@ import os
 import random
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +23,8 @@ from utils import _run_git_command, get_spec, hashcode, prepare_to_run
 from find_candidates import process_repo as generate_candidates
 from claude_cli import call_llm, extract_json_from_response
 from client import LLMFactory
+from ast_analyzers import ensure_mapping_exists
+from diff_analyzer import extract_modified_functions, print_modified_functions
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +32,7 @@ from client import LLMFactory
 # ---------------------------------------------------------------------------
 
 MAX_FIX_RETRIES = 1
-MAX_CANDIDATE_RETRIES = 3
+MAX_CANDIDATE_RETRIES = 3  # Max new candidates to try per run (not cumulative across runs)
 DIFFICULTY_LEVELS = ( "easy", "medium", "hard")
 
 # Instruction levels for evaluation (each with varying information disclosure):
@@ -252,33 +255,200 @@ def _accumulate_usage(target: Dict, source: Dict) -> None:
         target["total_cost_usd"] = target.get("total_cost_usd", 0.0) + source["total_cost_usd"]
 
 
-def print_usage_summary(usage_records: List[Dict]):
-    """Print a table summarising token usage across all invocations."""
-    print(f"\n{'='*60}")
-    print("Token Usage Summary")
-    print(f"{'='*60}")
-    print(f"  {'Smell Type':<30} {'In Tokens':>12} {'Out Tokens':>12} {'Cost(USD)':>10} {'Time(s)':>8}")
-    print(f"  {'-'*30} {'-'*12} {'-'*12} {'-'*10} {'-'*8}")
+def append_candidate_attempt(
+    code_smells_path: str,
+    smell_type: str,
+    difficulty: str,
+    repo_name: str,
+    attempt_record: Dict,
+    result: Optional[Dict] = None,
+    language: str = "python",
+) -> None:
+    """Append a candidate attempt to the code_smells.json file.
 
-    total_in = total_out = 0
+    If this is the first successful attempt, also add the full result fields.
+    Otherwise, just update the timing_stats.all_candidate_attempts array.
+    """
+    # Load existing data
+    if os.path.exists(code_smells_path):
+        try:
+            with open(code_smells_path, "r", encoding="utf-8") as f:
+                all_entries = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            all_entries = []
+    else:
+        all_entries = []
+
+    # Find the entry for this smell_type + difficulty + repo_name
+    # Use temporary_id for matching before instance_id is available
+    entry_idx = None
+    temp_id = f"{repo_name}::{smell_type}::{difficulty}"
+
+    for idx, entry in enumerate(all_entries):
+        # Match by temporary_id first (for in-progress cases)
+        if entry.get("_temporary_id") == temp_id:
+            entry_idx = idx
+            break
+        # Fallback: match by (type, difficulty, project_name) for old entries
+        if (entry.get("type") == smell_type and
+            entry.get("difficulty") == difficulty and
+            entry.get("project_name") == repo_name):
+            entry_idx = idx
+            break
+
+    if entry_idx is None:
+        # Create new entry with temporary_id
+        if result and attempt_record.get("success"):
+            # First successful attempt: use the full result
+            entry = result
+            # Remove temporary_id once we have instance_id
+            if "instance_id" in result:
+                entry.pop("_temporary_id", None)
+        else:
+            # First attempt (failed): create minimal entry with temporary_id
+            entry = {
+                "_temporary_id": temp_id,  # Temporary unique identifier
+                "type": smell_type,
+                "difficulty": difficulty,
+                "project_name": repo_name,
+                "language": language,
+                "timing_stats": {
+                    "all_candidate_attempts": []
+                }
+            }
+        all_entries.append(entry)
+        entry_idx = len(all_entries) - 1
+
+    # Update timing_stats
+    if "timing_stats" not in all_entries[entry_idx]:
+        all_entries[entry_idx]["timing_stats"] = {}
+    if "all_candidate_attempts" not in all_entries[entry_idx]["timing_stats"]:
+        all_entries[entry_idx]["timing_stats"]["all_candidate_attempts"] = []
+
+    # Append this attempt
+    all_entries[entry_idx]["timing_stats"]["all_candidate_attempts"].append(attempt_record)
+
+    # If this is a successful attempt, update the full entry
+    if result and attempt_record.get("success"):
+        # Update all fields from result except timing_stats (we're building it incrementally)
+        for key, value in result.items():
+            if key != "timing_stats" and key != "_current_attempt_stats":
+                all_entries[entry_idx][key] = value
+
+        # Ensure language field is set
+        all_entries[entry_idx]["language"] = language
+
+        # Remove temporary_id once we have instance_id
+        if "instance_id" in result:
+            all_entries[entry_idx].pop("_temporary_id", None)
+
+        # Update timing_stats summary fields
+        total_attempts = all_entries[entry_idx]["timing_stats"]["all_candidate_attempts"]
+        all_entries[entry_idx]["timing_stats"]["total_candidate_retries"] = len(total_attempts)
+        all_entries[entry_idx]["timing_stats"]["successful_candidate_index"] = attempt_record["candidate_index"]
+
+        # Calculate total duration with retries
+        total_dur = sum(att.get("total_duration_seconds", 0) for att in total_attempts)
+        all_entries[entry_idx]["timing_stats"]["total_duration_with_retries_seconds"] = total_dur
+
+    # Write back to file
+    with open(code_smells_path, "w", encoding="utf-8") as f:
+        json.dump(all_entries, f, indent=2, ensure_ascii=False)
+
+
+def print_usage_summary(usage_records: List[Dict]):
+    """Print a table summarising token usage and timing across all invocations."""
+    print(f"\n{'='*100}")
+    print("Token Usage & Timing Summary (All Candidate Attempts)")
+    print(f"{'='*100}")
+    print(f"  {'Smell Type':<20} {'Input':>10} {'Cache':>10} {'Total In':>10} {'Output':>10} {'Cost(USD)':>10} {'Time(s)':>8} {'Retries':>7}")
+    print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*8} {'-'*7}")
+
+    total_in = total_cache = total_out = 0
     total_cost = 0.0
-    total_dur = 0
+    total_dur = 0.0
+    total_retries = 0
 
     for rec in usage_records:
-        name = rec.get("smell_type", "?")[:30]
-        u = rec.get("usage", {})
-        inp = u.get("input_tokens", 0)
-        out = u.get("output_tokens", 0)
-        cost = u.get("total_cost_usd", 0.0)
-        dur = u.get("duration_ms", 0)
+        name = rec.get("smell_type", "?")[:20]
+
+        # Accumulate usage from all candidate attempts
+        timing = rec.get("timing_stats", {})
+        all_attempts = timing.get("all_candidate_attempts", [])
+
+        inp = cache = out = 0
+        cost = 0.0
+
+        print(f"  [DEBUG] {name}: {len(all_attempts)} attempts")
+        for att_idx, att in enumerate(all_attempts):
+            att_in = att_cache = att_out = 0
+            att_cost = 0.0
+
+            # Accumulate smell_injection usage
+            inj = att.get("smell_injection", {}).get("usage", {})
+            inj_in = inj.get("input_tokens", 0)
+            inj_cache = inj.get("cache_read_tokens", 0)
+            inj_out = inj.get("output_tokens", 0)
+            inj_cost = inj.get("total_cost_usd", 0.0)
+            inp += inj_in
+            cache += inj_cache
+            out += inj_out
+            cost += inj_cost
+            att_in += inj_in
+            att_cache += inj_cache
+            att_out += inj_out
+            att_cost += inj_cost
+
+            # Accumulate fix_attempts usage
+            for fix in att.get("fix_attempts", []):
+                fix_usage = fix.get("usage", {})
+                fix_in = fix_usage.get("input_tokens", 0)
+                fix_cache = fix_usage.get("cache_read_tokens", 0)
+                fix_out = fix_usage.get("output_tokens", 0)
+                fix_cost = fix_usage.get("total_cost_usd", 0.0)
+                inp += fix_in
+                cache += fix_cache
+                out += fix_out
+                cost += fix_cost
+                att_in += fix_in
+                att_cache += fix_cache
+                att_out += fix_out
+                att_cost += fix_cost
+
+            # Accumulate smell_analysis usage
+            analysis = att.get("smell_analysis", {}).get("usage", {})
+            ana_in = analysis.get("input_tokens", 0)
+            ana_cache = analysis.get("cache_read_tokens", 0)
+            ana_out = analysis.get("output_tokens", 0)
+            ana_cost = analysis.get("total_cost_usd", 0.0)
+            inp += ana_in
+            cache += ana_cache
+            out += ana_out
+            cost += ana_cost
+            att_in += ana_in
+            att_cache += ana_cache
+            att_out += ana_out
+            att_cost += ana_cost
+
+            att_total_in = att_in + att_cache
+            print(f"    [DEBUG] Attempt {att_idx}: in={att_in}, cache={att_cache}, total_in={att_total_in}, out={att_out}, cost=${att_cost:.4f}")
+
+        actual_dur = timing.get("total_duration_with_retries_seconds", 0.0)
+        retries = timing.get("total_candidate_retries", 0)
+
         total_in += inp
+        total_cache += cache
         total_out += out
         total_cost += cost
-        total_dur += dur
-        print(f"  {name:<30} {inp:>12,} {out:>12,} ${cost:>9.4f} {dur/1000:>7.1f}")
+        total_dur += actual_dur
+        total_retries += retries
 
-    print(f"  {'-'*30} {'-'*12} {'-'*12} {'-'*10} {'-'*8}")
-    print(f"  {'Total':<30} {total_in:>12,} {total_out:>12,} ${total_cost:>9.4f} {total_dur/1000:>7.1f}")
+        total_inp = inp + cache
+        print(f"  {name:<20} {inp:>10,} {cache:>10,} {total_inp:>10,} {out:>10,} ${cost:>9.4f} {actual_dur:>7.1f} {retries:>7}")
+
+    print(f"  {'-'*20} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*8} {'-'*7}")
+    grand_total_in = total_in + total_cache
+    print(f"  {'Total':<20} {total_in:>10,} {total_cache:>10,} {grand_total_in:>10,} {total_out:>10,} ${total_cost:>9.4f} {total_dur:>7.1f} {total_retries:>7}")
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +463,7 @@ def apply_diff_and_test(
     commit_id: str,
     test_cmd: str = "",
     envs: Optional[Dict] = None,
+    capture_output: bool = True,
 ) -> Tuple[bool, str]:
     """Apply a smell diff to the repo, run mapped tests, then reset.
 
@@ -320,6 +491,7 @@ def apply_diff_and_test(
         success, output = run_project_tests(
             repo_name, repo_path, testsuites,
             envs=envs, test_cmd=test_cmd, timeout=60,
+            capture_output=capture_output,
         )
         return bool(success), output or ""
     except Exception as e:
@@ -694,6 +866,24 @@ def process_one_smell(
     4. If tests fail: save attempt, send errors back to agent to fix, repeat
     5. On success: return result dict
     """
+    # Start timing for the entire process
+    process_start_time = time.time()
+
+    # Individual candidate attempt stats (will be added to all_candidate_attempts in main loop)
+    current_attempt_stats = {
+        "candidate_index": candidate_attempt,
+        "smell_injection": {
+            "duration_seconds": 0.0,
+            "usage": {}
+        },
+        "fix_attempts": [],
+        "smell_analysis": {
+            "duration_seconds": 0.0,
+            "usage": {}
+        },
+        "total_fix_attempts": 0
+    }
+
     commit_id = repo_spec["commit_id"]
     src_path = repo_spec.get("src_path", repo_name)
     smell_type_slug = smell_type.replace(" ", "_")
@@ -707,26 +897,53 @@ def process_one_smell(
     prompt = render_prompt(template, smell_type, smell_desc, src_path, difficulty, smell_config, target_file, target_file_lines, candidate)
 
     print(f"  Calling {agent} for {repo_name} / {smell_type} ...")
+    injection_start_time = time.time()
     try:
         response_text, trajectory, usage = call_agent(prompt, cwd=repo_path, agent=agent, model=agent_model)
+        injection_duration = time.time() - injection_start_time
+        current_attempt_stats["smell_injection"]["duration_seconds"] = injection_duration
+        current_attempt_stats["smell_injection"]["usage"] = dict(usage)
+
+        # Debug: print usage
+        in_tok = usage.get('input_tokens', 0)
+        cache_read = usage.get('cache_read_tokens', 0)
+        cache_create = usage.get('cache_creation_tokens', 0)
+        out_tok = usage.get('output_tokens', 0)
+        print(f"  [DEBUG] Injection usage: in={in_tok}, cache_read={cache_read}, cache_create={cache_create}, "
+              f"out={out_tok}, total_in={in_tok + cache_read}, cost=${usage.get('total_cost_usd', 0):.4f}")
     except Exception as e:
         print(f"  Agent call failed: {e}")
         reset_repository(repo_path, commit_id)
         return None
 
-    # Capture diffs before reset
+    # Capture diffs before reset (always capture, even if we'll fail later)
     smell_content, gt_content = capture_diffs(repo_path, commit_id)
+
+    # Store diff in current_attempt_stats regardless of success/failure
+    current_attempt_stats["smell_content"] = smell_content
+    current_attempt_stats["has_diff"] = bool(smell_content.strip())
+
     if not smell_content.strip():
         print(f"  No diff produced for {repo_name} / {smell_type}")
         reset_repository(repo_path, commit_id)
-        return None
+        # Return failure info instead of None
+        return {
+            "_is_failure": True,
+            "_failure_reason": "no_diff",
+            "_current_attempt_stats": current_attempt_stats
+        }
 
     # Parse JSON from response
     parsed = extract_json_from_response(response_text)
     if parsed is None:
         print(f"  Failed to parse JSON from agent response for {repo_name} / {smell_type}")
         reset_repository(repo_path, commit_id)
-        return None
+        # Return failure info instead of None
+        return {
+            "_is_failure": True,
+            "_failure_reason": "json_parse_failed",
+            "_current_attempt_stats": current_attempt_stats
+        }
 
     hint_targeted = parsed.get("hint_targeted", "")
     hint_guided = parsed.get("hint_guided", "")
@@ -749,6 +966,39 @@ def process_one_smell(
 
     # Normalize test_functions (list of lists)
     normalized_test_functions = normalize_function_paths(test_functions, repo_path)
+
+    # *** NEW: Extract modified functions directly from diff for more reliable test mapping ***
+    print(f"  [diff analysis] Extracting modified functions from diff...")
+    language = repo_spec.get("language", "python").lower()
+    try:
+        diff_extracted_functions = extract_modified_functions(
+            diff_content=smell_content,
+            repo_path=repo_path,
+            language=language,
+        )
+        print_modified_functions(diff_extracted_functions)
+
+        # Convert to the format expected by find_tests_for_functions
+        # diff_extracted_functions is [(file_path, class_name, method_name), ...]
+        # We need [[file_path, class_name, method_name], ...]
+        diff_test_functions = [list(t) for t in diff_extracted_functions]
+
+        # Combine with model-provided test_functions (union)
+        combined_test_functions = list(normalized_test_functions)
+        for func in diff_test_functions:
+            if func not in combined_test_functions:
+                combined_test_functions.append(func)
+
+        print(f"  [diff analysis] Model provided {len(normalized_test_functions)} functions, "
+              f"diff analysis found {len(diff_test_functions)} functions, "
+              f"combined total: {len(combined_test_functions)} functions")
+
+        # Use combined list for test mapping
+        normalized_test_functions = combined_test_functions
+    except Exception as e:
+        print(f"  [diff analysis] Failed to extract functions from diff: {e}")
+        # Fall back to model-provided test_functions
+        print(f"  [diff analysis] Falling back to model-provided test_functions")
 
     # Find mapped tests
     testsuites = find_tests_for_functions(
@@ -775,7 +1025,53 @@ def process_one_smell(
             testsuites=[],
         )
         reset_repository(repo_path, commit_id)
-        return None
+        # Return failure info instead of None
+        return {
+            "_is_failure": True,
+            "_failure_reason": "no_tests_found",
+            "_current_attempt_stats": current_attempt_stats
+        }
+
+    # --- Baseline test check: verify tests pass on clean repo BEFORE applying smell ---
+    print(f"  [baseline] Verifying {len(testsuites)} tests pass on clean baseline...")
+    baseline_passed, baseline_output = run_project_tests(
+        repo_name, repo_path, testsuites,
+        envs=repo_spec.get("envs", {}),
+        test_cmd=repo_spec.get("test_cmd", ""),
+        timeout=60,
+        capture_output=False,  # Stream output to console for visibility
+    )
+
+    if not baseline_passed:
+        print(f"  [baseline] FAILED - Tests don't pass on clean baseline!")
+        print(f"  [baseline] Baseline test output:")
+        print("  " + "\n  ".join(baseline_output.split("\n")[:30]))
+        if len(baseline_output.split("\n")) > 30:
+            print(f"  ... (output truncated)")
+
+        # Save baseline failure
+        baseline_attempt_dir = os.path.join(smell_dir, "baseline_failed")
+        save_attempt(
+            attempt_dir=baseline_attempt_dir,
+            trajectory=[],
+            smell_content="",
+            test_output=baseline_output,
+            test_passed=False,
+            usage={},
+            parsed_json=parsed,
+            candidate_attempt=candidate_attempt,
+            testsuites_found=True,
+            testsuites=testsuites,
+        )
+
+        reset_repository(repo_path, commit_id)
+        return {
+            "_is_failure": True,
+            "_failure_reason": "baseline_tests_failed",
+            "_current_attempt_stats": current_attempt_stats
+        }
+
+    print(f"  [baseline] PASSED - Baseline tests are healthy")
 
     # --- Test & fix loop ---
     total_usage = dict(usage)  # accumulate across retries
@@ -792,6 +1088,7 @@ def process_one_smell(
             commit_id=commit_id,
             test_cmd=repo_spec.get("test_cmd", ""),
             envs=repo_spec.get("envs", {}),
+            capture_output=False,  # Stream output to console for visibility
         )
 
         # Save this attempt
@@ -813,12 +1110,22 @@ def process_one_smell(
             break
 
         print(f"  [{attempt_label}] Tests FAILED for {repo_name} / {smell_type}")
+        # Print test output for debugging
+        print(f"  [{attempt_label}] Test output:")
+        print("  " + "\n  ".join(test_output.split("\n")[:50]))  # Print first 50 lines
+        if len(test_output.split("\n")) > 50:
+            print(f"  ... (output truncated, see {attempt_dir}/test_output.txt for full output)")
 
         # No more retries left
         if attempt >= MAX_FIX_RETRIES:
             print(f"  Exhausted {MAX_FIX_RETRIES} fix retries, giving up on {smell_type}")
             reset_repository(repo_path, commit_id)
-            return None
+            # Return failure info instead of None
+            return {
+                "_is_failure": True,
+                "_failure_reason": f"test_failed_after_{MAX_FIX_RETRIES + 1}_attempts",
+                "_current_attempt_stats": current_attempt_stats
+            }
 
         # Ask agent to fix
         print(f"  [{attempt_label}] Sending test errors to agent for fix ...")
@@ -830,8 +1137,28 @@ def process_one_smell(
             test_error_output=test_output,
         )
 
+        fix_start_time = time.time()
         try:
             response_text, trajectory, usage = call_agent(fix_prompt, cwd=repo_path, agent=agent, model=agent_model)
+            fix_duration = time.time() - fix_start_time
+
+            # Debug: print usage
+            in_tok = usage.get('input_tokens', 0)
+            cache_read = usage.get('cache_read_tokens', 0)
+            cache_create = usage.get('cache_creation_tokens', 0)
+            out_tok = usage.get('output_tokens', 0)
+            print(f"  [DEBUG] Fix attempt {attempt + 1} usage: in={in_tok}, cache_read={cache_read}, "
+                  f"cache_create={cache_create}, out={out_tok}, total_in={in_tok + cache_read}, "
+                  f"cost=${usage.get('total_cost_usd', 0):.4f}")
+
+            # Record this fix attempt
+            fix_attempt_record = {
+                "attempt": attempt + 1,
+                "duration_seconds": fix_duration,
+                "usage": dict(usage)
+            }
+            current_attempt_stats["fix_attempts"].append(fix_attempt_record)
+            current_attempt_stats["total_fix_attempts"] += 1
         except Exception as e:
             print(f"  Fix call failed: {e}")
             reset_repository(repo_path, commit_id)
@@ -914,6 +1241,7 @@ def process_one_smell(
 
     # Generate smell analysis + custom rubrics via LLM
     print(f"  Generating smell analysis for {instance_id} ...")
+    analysis_start_time = time.time()
     analysis, rubrics, analysis_usage = generate_smell_analysis(
         smell_type=smell_type,
         smell_content=smell_content,
@@ -921,15 +1249,38 @@ def process_one_smell(
         model=model,
         base_url=base_url,
     )
+    analysis_duration = time.time() - analysis_start_time
+    current_attempt_stats["smell_analysis"]["duration_seconds"] = analysis_duration
+    current_attempt_stats["smell_analysis"]["usage"] = dict(analysis_usage)
+
+    # Debug: print usage
+    in_tok = analysis_usage.get('input_tokens', 0)
+    cache_read = analysis_usage.get('cache_read_tokens', 0)
+    cache_create = analysis_usage.get('cache_creation_tokens', 0)
+    out_tok = analysis_usage.get('output_tokens', 0)
+    print(f"  [DEBUG] Analysis usage: in={in_tok}, cache_read={cache_read}, cache_create={cache_create}, "
+          f"out={out_tok}, total_in={in_tok + cache_read}, cost=${analysis_usage.get('total_cost_usd', 0):.4f}")
+
     result["smell_analysis"] = analysis
     result["custom_rubrics"] = rubrics
     result["analysis_usage"] = {**analysis_usage, "model": model}
+
+    # Calculate total duration for this candidate attempt
+    total_duration = time.time() - process_start_time
+    current_attempt_stats["total_duration_seconds"] = total_duration
+
+    # Store current attempt stats in result (will be reorganized by main loop)
+    result["_current_attempt_stats"] = current_attempt_stats
 
     # Write this case immediately to its own directory
     result_path = os.path.join(smell_dir, "result.json")
     with open(result_path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
     print(f"  Written case to {result_path}")
+    print(f"  Total duration: {total_duration:.2f}s "
+          f"(injection: {current_attempt_stats['smell_injection']['duration_seconds']:.2f}s, "
+          f"fixes: {current_attempt_stats['total_fix_attempts']}, "
+          f"analysis: {current_attempt_stats['smell_analysis']['duration_seconds']:.2f}s)")
 
     return result
 
@@ -944,7 +1295,7 @@ def main(args):
     if args.test:
         smell_types = smell_types[:1]
         difficulty_levels = ("medium",)
-        print("[TEST MODE] Using first smell type only, difficulty=medium")
+        print("[TEST MODE] Using first smell type only, difficulty=medium, first eligible repo")
     else:
         difficulty_levels = DIFFICULTY_LEVELS
 
@@ -961,6 +1312,9 @@ def main(args):
         if not args.project_name and not spec.get("selected", False):
             continue
         selected_repos[name] = spec
+        # In test mode, only use the first eligible repo
+        if args.test:
+            break
 
     if not selected_repos:
         print("No repos selected. Check repo_list.json or --project-name.")
@@ -1013,24 +1367,50 @@ def main(args):
 
         # Build set of completed (smell_type, difficulty) pairs
         # and index existing entries for quick lookup
-        completed_pairs = set()       # fully done (has analysis)
+        completed_pairs = set()       # fully done (has successful attempt + analysis)
         needs_analysis_pairs = set()  # case exists but missing smell_analysis
+        in_progress_pairs = set()     # has attempts but no successful one yet
         existing_entry_index: Dict[tuple, int] = {}  # pair -> index in existing_entries
         for idx, entry in enumerate(existing_entries):
+            # Skip entries that are still using temporary_id (in progress from another run)
+            if "_temporary_id" in entry and "instance_id" not in entry:
+                # This is an in-progress entry without instance_id yet
+                key = (entry.get("type", ""),
+                       entry.get("difficulty", ""))
+                existing_entry_index[key] = idx
+                timing_stats = entry.get("timing_stats", {})
+                attempts = timing_stats.get("all_candidate_attempts", [])
+                if attempts:
+                    in_progress_pairs.add(key)
+                continue
+
             key = (entry.get("type", ""),
                    entry.get("difficulty", ""))
             existing_entry_index[key] = idx
-            if (entry.get("smell_analysis")
-                    and _has_valid_rubrics(entry.get("custom_rubrics"))
-                    and entry.get("analysis_usage")):
-                completed_pairs.add(key)
-            else:
-                needs_analysis_pairs.add(key)
+
+            # Check if any attempt succeeded
+            timing_stats = entry.get("timing_stats", {})
+            attempts = timing_stats.get("all_candidate_attempts", [])
+            has_success = any(att.get("success") for att in attempts)
+
+            if has_success:
+                # Has successful attempt
+                if (entry.get("smell_analysis")
+                        and _has_valid_rubrics(entry.get("custom_rubrics"))
+                        and entry.get("analysis_usage")):
+                    completed_pairs.add(key)
+                else:
+                    needs_analysis_pairs.add(key)
+            elif attempts:
+                # Has attempts but no success yet
+                in_progress_pairs.add(key)
 
         if completed_pairs:
             print(f"  {len(completed_pairs)} completed cases for {repo_name}")
         if needs_analysis_pairs:
             print(f"  {len(needs_analysis_pairs)} cases needing smell analysis for {repo_name}")
+        if in_progress_pairs:
+            print(f"  {len(in_progress_pairs)} cases in progress (has failed attempts) for {repo_name}")
 
         all_results = list(existing_entries)  # start from existing data for this repo
 
@@ -1043,11 +1423,22 @@ def main(args):
             print(f"Failed to prepare environment for {repo_name}, skipping")
             continue
 
-        # Load function-test mapping
+        # Load function-test mapping (generate if missing)
         mapping_path = os.path.join(repo_output_dir, "function_testunit_mapping.json")
         if not os.path.exists(mapping_path):
-            print(f"function_testunit_mapping.json not found for {repo_name}, skipping")
-            continue
+            print(f"function_testunit_mapping.json not found for {repo_name}, generating...")
+            # Automatically generate mapping using appropriate AST analyzer
+            success = ensure_mapping_exists(
+                project_name=repo_name,
+                project_path=repo_path,
+                output_dir=repo_output_dir,
+                force_regenerate=False
+            )
+            if not success:
+                print(f"Failed to generate function_testunit_mapping.json for {repo_name}, skipping")
+                continue
+            print(f"Successfully generated function_testunit_mapping.json for {repo_name}")
+
         mapping = load_function_test_mapping(mapping_path)
 
         commit_id = repo_spec["commit_id"]
@@ -1095,6 +1486,7 @@ def main(args):
 
         # Build list of (smell, difficulty) pairs that still need processing
         # - "generate": no case exists, need full generation
+        # - "continue": case exists with failed attempts, continue trying
         # - "analysis_only": case exists but missing smell_analysis/custom_rubrics
         pending_tasks = []
         for smell in smell_types:
@@ -1105,16 +1497,19 @@ def main(args):
                     continue
                 if pair in needs_analysis_pairs:
                     pending_tasks.append((smell, difficulty, "analysis_only"))
+                elif pair in in_progress_pairs:
+                    pending_tasks.append((smell, difficulty, "continue"))
                 else:
                     pending_tasks.append((smell, difficulty, "generate"))
 
         total_tasks = len(smell_types) * len(difficulty_levels)
         completed_count = total_tasks - len(pending_tasks)
         gen_count = sum(1 for _, _, m in pending_tasks if m == "generate")
+        cont_count = sum(1 for _, _, m in pending_tasks if m == "continue")
         ana_count = sum(1 for _, _, m in pending_tasks if m == "analysis_only")
         print(f"  {len(pending_tasks)} tasks pending "
               f"({completed_count} already completed, "
-              f"{gen_count} to generate, {ana_count} need analysis only)")
+              f"{gen_count} to generate, {cont_count} to continue, {ana_count} need analysis only)")
 
         if not pending_tasks:
             print(f"  All smell type x difficulty combinations already completed for {repo_name}, skipping")
@@ -1131,6 +1526,8 @@ def main(args):
                 entry = existing_entries[entry_idx]
                 print(f"\n--- [{task_idx+1}/{len(pending_tasks)}] "
                       f"{smell_type} ({difficulty}) -> generating analysis only ---")
+
+                analysis_start = time.time()
                 analysis, rubrics, analysis_usage = generate_smell_analysis(
                     smell_type=smell_type,
                     smell_content=entry["smell_content"],
@@ -1138,24 +1535,77 @@ def main(args):
                     model=args.model,
                     base_url=args.base_url,
                 )
+                analysis_duration = time.time() - analysis_start
+
                 entry["smell_analysis"] = analysis
                 entry["custom_rubrics"] = rubrics
                 entry["analysis_usage"] = {**analysis_usage, "model": args.model}
-                # Update the corresponding entry in all_results too
+
+                # Update timing_stats: add smell_analysis info to the successful attempt
+                if "timing_stats" in entry and "all_candidate_attempts" in entry["timing_stats"]:
+                    # Find the successful attempt and update its smell_analysis
+                    attempts = entry["timing_stats"]["all_candidate_attempts"]
+                    for att in attempts:
+                        if att.get("success"):
+                            att["smell_analysis"] = {
+                                "duration_seconds": analysis_duration,
+                                "usage": dict(analysis_usage)
+                            }
+                            break
+                else:
+                    # Fallback: create minimal timing_stats if not exists
+                    entry["timing_stats"] = {
+                        "all_candidate_attempts": [{
+                            "candidate_index": 0,
+                            "success": True,
+                            "smell_analysis": {
+                                "duration_seconds": analysis_duration,
+                                "usage": dict(analysis_usage)
+                            }
+                        }]
+                    }
+
+                # Update the corresponding entry in all_results and save
                 for i, r in enumerate(all_results):
                     if r.get("instance_id") == entry.get("instance_id"):
                         all_results[i] = entry
                         break
+
+                # Save immediately to per-repo file
+                with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
+                    json.dump(all_results, f, indent=2, ensure_ascii=False)
+
                 usage_records.append({
                     "smell_type": smell_type,
                     "difficulty": difficulty,
                     "usage": analysis_usage,
+                    "timing_stats": entry.get("timing_stats", {}),
                 })
-                # Save immediately to per-repo file
-                with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
-                    json.dump(all_results, f, indent=2, ensure_ascii=False)
-                print(f"  Analysis generated for {entry.get('instance_id', '?')}")
+                print(f"  Analysis generated for {entry.get('instance_id', '?')} "
+                      f"(took {analysis_duration:.2f}s)")
                 continue
+
+            # --- continue mode: load existing attempts and continue from where we left off ---
+            pair = (smell_type, difficulty)
+            existing_attempts = []
+            tried_candidates = set()  # Set of (target_file, target_location) tuples already tried
+
+            if mode == "continue":
+                # Load existing attempts from file
+                entry_idx = existing_entry_index[pair]
+                entry = existing_entries[entry_idx]
+                existing_attempts = entry.get("timing_stats", {}).get("all_candidate_attempts", [])
+
+                # Extract already-tried candidates to avoid duplicates
+                for att in existing_attempts:
+                    target_file = att.get("target_file", "")
+                    target_location = att.get("target_location", "")
+                    if target_file and target_location:
+                        tried_candidates.add((target_file, target_location))
+
+                print(f"\n--- [{task_idx+1}/{len(pending_tasks)}] "
+                      f"{smell_type} ({difficulty}) -> continuing from attempt {len(existing_attempts)} "
+                      f"({len(existing_attempts)} previous attempts, {len(tried_candidates)} unique candidates tried) ---")
 
             # Pick a random candidate for this smell type, retry with different candidates on failure
             smell_candidates = candidates_data.get(smell_type, [])
@@ -1163,16 +1613,42 @@ def main(args):
                 print(f"  No candidates available for {smell_type}, skipping")
                 continue
 
-            tried_indices = set()
+            # Filter out already-tried candidates
+            available_candidates = []
+            for idx, cand in enumerate(smell_candidates):
+                target_file = cand.get("file", "")
+                cls = cand.get("class_name") or ""
+                method = cand.get("method_name") or ""
+                location = f"{cls}.{method}" if cls and method else (cls or method)
+                if (target_file, location) not in tried_candidates:
+                    available_candidates.append((idx, cand))
+
+            # If all candidates have been tried, reset and allow retrying
+            if not available_candidates:
+                print(f"  All {len(smell_candidates)} candidates have been tried once, "
+                      f"resetting to allow retries...")
+                tried_candidates.clear()
+                for idx, cand in enumerate(smell_candidates):
+                    target_file = cand.get("file", "")
+                    cls = cand.get("class_name") or ""
+                    method = cand.get("method_name") or ""
+                    location = f"{cls}.{method}" if cls and method else (cls or method)
+                    available_candidates.append((idx, cand))
+
             result = None
-            for candidate_attempt in range(min(MAX_CANDIDATE_RETRIES, len(smell_candidates))):
-                # Pick a candidate we haven't tried yet
-                remaining = [i for i in range(len(smell_candidates)) if i not in tried_indices]
-                if not remaining:
-                    break
-                chosen_idx = random.choice(remaining)
-                tried_indices.add(chosen_idx)
-                candidate = smell_candidates[chosen_idx]
+            candidate_start_time = time.time()
+
+            # Try up to MAX_CANDIDATE_RETRIES new candidates in this run
+            num_attempts_so_far = len(existing_attempts)
+            max_new_attempts = min(MAX_CANDIDATE_RETRIES, len(available_candidates))
+
+            for attempt_idx in range(max_new_attempts):
+                # Randomly pick from available candidates
+                chosen_idx, candidate = random.choice(available_candidates)
+                # Remove from available to avoid picking again in this run
+                available_candidates = [(i, c) for i, c in available_candidates if i != chosen_idx]
+
+                candidate_attempt = num_attempts_so_far + attempt_idx
 
                 target_file = candidate.get("file", "")
                 cls = candidate.get("class_name") or ""
@@ -1184,9 +1660,10 @@ def main(args):
                     print(f"\n--- [{task_idx+1}/{len(pending_tasks)}] "
                           f"{smell_type} ({difficulty}) -> {target_file} : {label} ---")
                 else:
-                    print(f"  Retry {candidate_attempt}/{MAX_CANDIDATE_RETRIES} with different candidate: "
-                          f"{target_file} : {label}")
+                    print(f"  Attempt {attempt_idx + 1}/{max_new_attempts} (total attempts: {candidate_attempt + 1}) "
+                          f"with different candidate: {target_file} : {label}")
 
+                attempt_start = time.time()
                 reset_repository(repo_path, commit_id)
                 result = process_one_smell(
                     template=template,
@@ -1208,26 +1685,120 @@ def main(args):
                     agent_model=args.agent_model,
                     candidate_attempt=candidate_attempt,
                 )
+                attempt_duration = time.time() - attempt_start
 
-                if result:
+                # Record this attempt (success or failure)
+                is_failure = result and result.get("_is_failure", False)
+                is_success = result and not is_failure
+
+                attempt_record = {
+                    "candidate_index": candidate_attempt,
+                    "target_file": target_file,
+                    "target_location": label,
+                    "success": is_success,
+                }
+
+                # Extract stats from result (both success and failure)
+                if result and "_current_attempt_stats" in result:
+                    stats = result["_current_attempt_stats"]
+                    attempt_record.update(stats)
+
+                    # If this is a failure, add failure reason
+                    if is_failure:
+                        attempt_record["failure_reason"] = result.get("_failure_reason", "unknown")
+
+                    # Clean up temporary fields from result
+                    if not is_failure:
+                        result.pop("_current_attempt_stats", None)
+
+                    # Debug: print total tokens for this attempt
+                    total_in = total_cache_read = total_out = total_cost = 0.0
+                    if "smell_injection" in attempt_record:
+                        inj = attempt_record["smell_injection"].get("usage", {})
+                        total_in += inj.get("input_tokens", 0)
+                        total_cache_read += inj.get("cache_read_tokens", 0)
+                        total_out += inj.get("output_tokens", 0)
+                        total_cost += inj.get("total_cost_usd", 0.0)
+                    for fix in attempt_record.get("fix_attempts", []):
+                        fix_u = fix.get("usage", {})
+                        total_in += fix_u.get("input_tokens", 0)
+                        total_cache_read += fix_u.get("cache_read_tokens", 0)
+                        total_out += fix_u.get("output_tokens", 0)
+                        total_cost += fix_u.get("total_cost_usd", 0.0)
+                    if "smell_analysis" in attempt_record:
+                        ana = attempt_record["smell_analysis"].get("usage", {})
+                        total_in += ana.get("input_tokens", 0)
+                        total_cache_read += ana.get("cache_read_tokens", 0)
+                        total_out += ana.get("output_tokens", 0)
+                        total_cost += ana.get("total_cost_usd", 0.0)
+
+                    # Print debug info with failure reason if applicable
+                    debug_msg = f"  [DEBUG] Attempt {candidate_attempt} total: in={total_in}, cache_read={total_cache_read}, " \
+                                f"out={total_out}, total_in={total_in + total_cache_read}, cost=${total_cost:.4f}"
+                    if is_failure:
+                        debug_msg += f", FAILED: {attempt_record.get('failure_reason', 'unknown')}"
+                    print(debug_msg)
+                else:
+                    # No stats available (shouldn't happen with new code)
+                    attempt_record["total_duration_seconds"] = attempt_duration
+                    attempt_record["failure_reason"] = "no_stats_available"
+
+                # IMPORTANT: Write this attempt to file immediately (success or failure)
+                print(f"  Writing attempt {candidate_attempt} to {repo_smell_codes_path} ...")
+                append_candidate_attempt(
+                    code_smells_path=repo_smell_codes_path,
+                    smell_type=smell_type,
+                    difficulty=difficulty,
+                    repo_name=repo_name,
+                    attempt_record=attempt_record,
+                    result=result if is_success else None,
+                    language=repo_spec.get("language", "python"),
+                )
+
+                if is_success:
+                    # Success! Reload the file to get the complete entry with all attempts
+                    with open(repo_smell_codes_path, "r", encoding="utf-8") as f:
+                        all_results = json.load(f)
+                    print(f"  Success after {candidate_attempt + 1} candidate attempts!")
                     break
-                print(f"  Candidate failed for {smell_type} ({difficulty}), "
-                      f"attempt {candidate_attempt+1}/{min(MAX_CANDIDATE_RETRIES, len(smell_candidates))}")
 
-            if result:
-                all_results.append(result)
+                # Failed attempt
+                failure_reason = attempt_record.get("failure_reason", "unknown")
+                has_diff = attempt_record.get("has_diff", False)
+                print(f"  Candidate failed for {smell_type} ({difficulty}), "
+                      f"attempt {candidate_attempt + 1}, reason: {failure_reason}, has_diff: {has_diff}")
+
+            if is_success:
+                # Find the entry we just wrote to get complete timing_stats
+                for entry in all_results:
+                    if (entry.get("type") == smell_type and
+                        entry.get("difficulty") == difficulty and
+                        entry.get("project_name") == repo_name):
+                        result = entry
+                        break
+
                 usage_records.append({
                     "smell_type": smell_type,
                     "difficulty": difficulty,
                     "usage": result.get("usage", {}),
+                    "timing_stats": result.get("timing_stats", {}),
                 })
-                print(f"  Success: {result['instance_id']} ({len(result['testsuites'])} tests)")
 
-                # Save to per-repo code_smells.json immediately
-                with open(repo_smell_codes_path, "w", encoding="utf-8") as f:
-                    json.dump(all_results, f, indent=2, ensure_ascii=False)
+                # Print summary of all candidate attempts
+                timing = result.get("timing_stats", {})
+                all_attempts = timing.get("all_candidate_attempts", [])
+                print(f"  Success: {result['instance_id']} ({len(result['testsuites'])} tests)")
+                if len(all_attempts) > 1:
+                    print(f"  Candidate attempts summary:")
+                    for att in all_attempts:
+                        status = "✓" if att["success"] else "✗"
+                        fix_count = att.get("total_fix_attempts", 0)
+                        dur = att.get("total_duration_seconds", 0)
+                        print(f"    [{status}] Candidate {att['candidate_index']}: "
+                              f"{att['target_file']}::{att['target_location']} - "
+                              f"{dur:.1f}s ({fix_count} fixes)")
             else:
-                print(f"  Skipped: no valid result for {smell_type} ({difficulty}) after {len(tried_indices)} candidate(s)")
+                print(f"  Skipped: no valid result for {smell_type} ({difficulty}) after {candidate_attempt + 1} candidate(s)")
 
         # Print usage summary for this repo
         if usage_records:

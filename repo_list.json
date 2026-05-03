@@ -16,9 +16,9 @@
         "selected": true,
         "conda_env_create": "conda env create -f environment.yml",
         "build_cmd": [
-                        "python -m pip install -r requirements/test_requirements.txt",
-                        "pip install -e .[dev]"
-                    ],
+            "python -m pip install -r requirements/test_requirements.txt",
+            "pip install -e .[dev]"
+        ],
         "env_name": "numpy-dev",
         "test_cmd": "--ignore=numpy/distutils --ignore=vendored-meson"
     },
@@ -32,17 +32,17 @@
         "build_cmd": "pip install -e .",
         "env_name": "jinja-dev"
     },
-    "pandas":{
-        "url":"https://github.com/pandas-dev/pandas",
-        "commit_id":"9c8bc3e55188c8aff37207a74f1dd144980b8874",
-        "src_path":"pandas",
+    "pandas": {
+        "url": "https://github.com/pandas-dev/pandas",
+        "commit_id": "9c8bc3e55188c8aff37207a74f1dd144980b8874",
+        "src_path": "pandas",
         "test_cmd": "-m \"not slow and not network and not db\" --ignore=pandas/tests/io/test_clipboard.py",
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": "python -m pip install -ve . --no-build-isolation",
         "selected": true,
         "env_name": "pandas-dev"
     },
-    "seaborn":{
+    "seaborn": {
         "url": "https://github.com/mwaskom/seaborn/",
         "commit_id": "d00a27df750130e28e4801caaedc782433863a37",
         "src_path": "seaborn",
@@ -50,19 +50,19 @@
         "conda_env_create": "conda create -n seaborn-dev python==3.10",
         "env_name": "seaborn-dev",
         "build_cmd": [
-                    "pip install flit_core click pytest==8.2",
-                    "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
-                ]
+            "pip install flit_core click pytest==8.2",
+            "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
+        ]
     },
-    "sphinx":{
-        "url":"https://github.com/sphinx-doc/sphinx",
-        "commit_id":"8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
+    "sphinx": {
+        "url": "https://github.com/sphinx-doc/sphinx",
+        "commit_id": "8ddba7e4cb5fdc035b9b18b2a8594724a3a33b86",
         "src_path": "sphinx",
         "selected": true,
         "conda_env_create": "conda create -n sphinx-dev -c conda-forge python==3.12 pytest pytest-cov defusedxml",
         "env_name": "sphinx-dev"
     },
-    "sympy":{
+    "sympy": {
         "url": "https://github.com/sympy/sympy",
         "commit_id": "16fa855354eb7bcabd3fe10993841e03b1382692",
         "src_path": "sympy",
@@ -70,7 +70,7 @@
         "conda_env_create": "conda create -n sympy-dev python==3.12 pytest pytest-cov hypothesis",
         "env_name": "sympy-dev"
     },
-    "scikit-learn":{
+    "scikit-learn": {
         "url": "https://github.com/scikit-learn/scikit-learn",
         "commit_id": "d3898d9d57aeb1e960d266613a2e31b07bca39d7",
         "src_path": "sklearn",
@@ -79,18 +79,18 @@
         "build_cmd": "pip install --editable . --verbose --no-build-isolation --config-settings editable-verbose=true",
         "env_name": "sklearn-dev"
     },
-    "matplotlib":{
+    "matplotlib": {
         "url": "https://github.com/matplotlib/matplotlib",
         "commit_id": "1392cbe3c79cdb93f9282747841d648770f60249",
         "src_path": "lib/matplotlib",
         "selected": false,
         "conda_env_create": "conda env create --file environment.yml",
         "build_cmd": [
-                        "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
-                    ],
+            "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
+        ],
         "env_name": "mpl-dev"
     },
-    "xarray":{
+    "xarray": {
         "url": "https://github.com/pydata/xarray",
         "commit_id": "da9ff0ab287ec7ad3ab3aed73860178bc5b6e761",
         "src_path": "xarray",
@@ -98,7 +98,7 @@
         "build_cmd": "pip install -e \".[dev]\"",
         "env_name": "xarray-dev",
         "selected": true,
-        "test_cmd" : "--ignore=xarray/tests/test_distributed.py"
+        "test_cmd": "--ignore=xarray/tests/test_distributed.py"
     },
     "gson": {
         "url": "https://github.com/google/gson.git",
@@ -108,8 +108,16 @@
         "language": "java",
         "build_tool": "maven",
         "build_cmd": "mvn compile -DskipTests -pl gson",
-        "test_cmd": "mvn test -pl gson",
+        "test_cmd": "-pl gson",
         "package_prefix": "com.google.gson"
+    },
+    "guava": {
+        "url": "https://github.com/google/guava.git",
+        "commit_id": "v33.4.8",
+        "src_path": "guava/src",
+        "test_path": "guava-tests/test",
+        "language": "java",
+        "package_prefix": "com.google.common"
     },
     "commons-io": {
         "url": "https://github.com/apache/commons-io.git",
@@ -119,7 +127,48 @@
         "language": "java",
         "build_tool": "maven",
         "build_cmd": "mvn compile -DskipTests",
-        "test_cmd": "mvn test",
+        "test_cmd": "",
         "package_prefix": "org.apache.commons.io"
+    },
+    "fastjson2": {
+        "url": "https://github.com/alibaba/fastjson2.git",
+        "commit_id": "2.0.52",
+        "src_path": "core/src/main/java",
+        "test_path": "core/src/test/java",
+        "language": "java",
+        "build_tool": "maven",
+        "build_cmd": "mvn compile -DskipTests -pl core",
+        "test_cmd": "-pl core",
+        "package_prefix": "com.alibaba.fastjson2"
+    },
+    "gin": {
+        "url": "https://github.com/gin-gonic/gin.git",
+        "commit_id": "v1.9.1",
+        "src_path": ".",
+        "test_path": ".",
+        "language": "go",
+        "build_tool": "go",
+        "test_cmd": "",
+        "package_prefix": "github.com/gin-gonic/gin"
+    },
+    "cobra": {
+        "url": "https://github.com/spf13/cobra.git",
+        "commit_id": "v1.8.0",
+        "src_path": ".",
+        "test_path": ".",
+        "language": "go",
+        "build_tool": "go",
+        "test_cmd": "",
+        "package_prefix": "github.com/spf13/cobra"
+    },
+    "viper": {
+        "url": "https://github.com/spf13/viper.git",
+        "commit_id": "v1.18.0",
+        "src_path": ".",
+        "test_path": ".",
+        "language": "go",
+        "build_tool": "go",
+        "test_cmd": "",
+        "package_prefix": "github.com/spf13/viper"
     }
 }

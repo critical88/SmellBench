@@ -182,7 +182,8 @@ def process_repo(
     os.makedirs(os.path.dirname(candidates_path), exist_ok=True)
 
     # Collect eligible files
-    eligible_files = collect_source_files(repo_path, src_path)
+    language = repo_spec.get("language", "python").lower()
+    eligible_files = collect_source_files(repo_path, src_path, language=language)
     if not eligible_files:
         print(f"  No eligible files (lines > 500) found in {src_path}")
         return False

@@ -49,15 +49,16 @@ def _count_lines(file_path: str) -> int:
         return 0
 
 
-def collect_source_files(repo_path: str, src_path: str) -> List[Dict]:
-    """Scan the repo's source directory and collect eligible Python files.
+def collect_source_files(repo_path: str, src_path: str, language: str = "python") -> List[Dict]:
+    """Scan the repo's source directory and collect eligible source files.
 
     Only files with >= MIN_LINES lines are included. Each file produces
     exactly 1 case per smell type (no multi-case based on size).
 
     Args:
         repo_path: Absolute path to the repository root.
-        src_path: Relative path to source code within the repo (e.g. "src/click").
+        src_path: Relative path to source code within the repo (e.g. "src/click" or "src/main/java").
+        language: Programming language ("python" or "java"). Defaults to "python".
 
     Returns:
         List of dicts sorted by line count descending:
@@ -67,6 +68,7 @@ def collect_source_files(repo_path: str, src_path: str) -> List[Dict]:
     if not os.path.isdir(scan_root):
         return []
 
+    language = language.lower()
     results = []
 
     for dirpath, dirnames, filenames in os.walk(scan_root):
@@ -89,15 +91,32 @@ def collect_source_files(repo_path: str, src_path: str) -> List[Dict]:
             continue
 
         for fname in filenames:
-            if not fname.endswith(".py"):
-                continue
-            if fname == "__init__.py":
-                continue
-            if fname.startswith("test_") or fname.endswith("_test.py"):
-                continue
+            # Language-specific file filtering
+            if language == "java":
+                # Java files
+                if not fname.endswith(".java"):
+                    continue
+                # Skip test classes (typically end with Test.java or Tests.java)
+                if fname.endswith("Test.java") or fname.endswith("Tests.java"):
+                    continue
+                if fname.startswith("Test") and fname.endswith(".java"):
+                    continue
+                # Skip abstract test classes
+                if fname.startswith("Abstract") and "Test" in fname:
+                    continue
+            else:
+                # Python files
+                if not fname.endswith(".py"):
+                    continue
+                if fname == "__init__.py":
+                    continue
+                if fname.startswith("test_") or fname.endswith("_test.py"):
+                    continue
+                if fname.startswith("_") and fname != "__init__.py":
+                    continue
+
+            # Common skips for both languages
             if fname.lower() in SKIP_FILE_NAMES:
-                continue
-            if fname.startswith("_") and fname != "__init__.py":
                 continue
 
             abs_path = os.path.join(dirpath, fname)

@@ -199,53 +199,136 @@ def create_test_command(test_file_paths=[], test_cmd="", envs=None):
 
 def install_repo(spec, project_path="../project"):
     repo_name = spec['name']
+    language = spec.get("language", "python").lower()
+
+    # Store project_path in spec for isinstalled to use
+    spec['project_path'] = project_path
 
     if isinstalled(spec):
-        print(f"{repo_name} already installed")
+        print(f"{repo_name} already installed/built")
         return True
+
     cwd = os.path.join(project_path, repo_name)
     _run_git_command(["reset", "--hard"], cwd=cwd)
     process = _run_git_command(["checkout", spec['commit_id']], cwd=cwd)
     if process.returncode == 0:
         print(f"checkout {repo_name} success")
-    
+
     process = _run_git_command(["clean", "-xdf"], cwd=cwd)
     if process.returncode == 0:
         print(f"clean {repo_name} success")
 
-    build_cmd = ["pip install -e ."]
-    if "build_cmd" in spec:
-        build_cmd = spec['build_cmd']
+    # Determine build command based on language
+    if language == "java":
+        # For Java projects, use Maven
+        build_cmd = ["mvn clean install -DskipTests"]
+        if "build_cmd" in spec:
+            build_cmd = spec['build_cmd']
+    else:
+        # For Python projects, use pip
+        build_cmd = ["pip install -e ."]
+        if "build_cmd" in spec:
+            build_cmd = spec['build_cmd']
+
     if isinstance(build_cmd, str):
         build_cmd = [build_cmd]
 
     build_cmd = [bc.split(" ") if isinstance(bc, str) else bc for bc in build_cmd]
-    print(f"installing {repo_name} ...")
-    process = conda_exec_cmd(build_cmd, spec, cwd=cwd, use_shell=True)
-    
+    print(f"installing/building {repo_name} (language: {language}) ...")
+
+    if language == "java":
+        # For Java, run Maven directly (no conda)
+        import subprocess
+        for cmd in build_cmd:
+            if isinstance(cmd, list):
+                cmd_list = cmd
+            else:
+                cmd_list = cmd.split(" ")
+            process = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True)
+            print(process.stdout)
+            if process.returncode != 0:
+                print(f"Build command failed: {' '.join(cmd_list)}")
+                print(process.stderr)
+    else:
+        # For Python, use conda
+        process = conda_exec_cmd(build_cmd, spec, cwd=cwd, use_shell=True)
+
     if isinstalled(spec):
-        print(f"install {repo_name} success")
+        print(f"install/build {repo_name} success")
         return True
     else:
-        print(f"install {repo_name} failed")
+        print(f"install/build {repo_name} failed")
         return False
 
 def isinstalled(spec):
-    repo_name = get_repo_name(spec)
-    cmd = f"pip show {repo_name}"
-    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
-    
-    if process.returncode == 0:
-        if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
-            return True
-    
-    repo_name = spec['name']
-    cmd = f"pip show {repo_name}"
-    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
-    if process.returncode == 0:
-        if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
-            return True
-    return False
+    """
+    Check if a project is installed/built successfully.
+
+    For Python projects: checks pip show for editable installation
+    For Java projects: checks if Maven build artifacts exist (target/classes)
+    """
+    language = spec.get("language", "python").lower()
+
+    if language == "java":
+        # For Java projects, check if Maven build was successful
+        # by looking for the target/classes directory
+        import os
+        repo_name = spec['name']
+        project_path = spec.get("project_path", "../project")
+        repo_root = os.path.join(project_path, repo_name)
+
+        # Check multiple possible locations for Maven build artifacts:
+        # 1. Root project: {repo_root}/target/classes
+        # 2. Submodule (same name as repo): {repo_root}/{repo_name}/target/classes
+        # 3. Custom src_path-based (e.g., gson/src/main/java -> gson/target/classes)
+        possible_targets = [
+            os.path.join(repo_root, "target", "classes"),
+        ]
+
+        # For multi-module projects: check if submodule exists (e.g., gson/gson/)
+        if os.path.exists(os.path.join(repo_root, repo_name)):
+            possible_targets.append(os.path.join(repo_root, repo_name, "target", "classes"))
+
+        # Extract module name from src_path if available (e.g., "gson/src/main/java" -> "gson")
+        src_path = spec.get("src_path", "")
+        if src_path and "/" in src_path:
+            module_name = src_path.split("/")[0]
+            module_target = os.path.join(repo_root, module_name, "target", "classes")
+            if module_target not in possible_targets:
+                possible_targets.append(module_target)
+
+        # Check each possible location
+        for target_dir in possible_targets:
+            if os.path.exists(target_dir) and os.path.isdir(target_dir):
+                # Check if there are any .class files
+                class_files = []
+                for root, dirs, files in os.walk(target_dir):
+                    class_files.extend([f for f in files if f.endswith('.class')])
+                    if len(class_files) > 0:
+                        break
+
+                if class_files:
+                    return True
+
+        return False
+
+    else:
+        # For Python projects, check pip installation
+        repo_name = get_repo_name(spec)
+        cmd = f"pip show {repo_name}"
+        process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
+
+        if process.returncode == 0:
+            if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
+                return True
+
+        repo_name = spec['name']
+        cmd = f"pip show {repo_name}"
+        process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
+        if process.returncode == 0:
+            if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
+                return True
+        return False
 
 def download_repo(spec, project_path="../project"):
     repo_name = spec['name']

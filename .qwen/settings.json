@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__WebSearch__web_search",
+      "WebFetch(tjj.beijing.gov.cn)"
+    ]
+  },
+  "$version": 3
+}

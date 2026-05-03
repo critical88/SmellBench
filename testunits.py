@@ -7,6 +7,9 @@ from utils import pushd, _log, create_test_command, DEBUG_LOG_LEVEL, _run_git_co
 from tqdm import tqdm
 import uuid
 
+# Import new OOP test runner framework
+from test_runners import TestRunnerFactory
+
 def reset_repository(repo_path, commit_hash=None):
     """Reset the git repository to a clean state at the given commit."""
     try:
@@ -30,6 +33,7 @@ def _build_mvn_test_cmd(test_file_paths, test_cmd=""):
       - test class simple names: ["FileUtilsTest", "IOCaseTest"]
       - test class FQNs: ["org.apache.commons.io.FileUtilsTest"]
       - test class + method: ["FileUtilsTest#testCopy"]
+    test_cmd: Additional Maven arguments (may include -pl for multi-module projects)
     """
     cmd = ["mvn", "test"]
 
@@ -39,8 +43,17 @@ def _build_mvn_test_cmd(test_file_paths, test_cmd=""):
 
     cmd.append("-DfailIfNoTests=false")
     cmd.append("-Dmaven.test.failure.ignore=false")
-    cmd.append("-pl")
-    cmd.append(".")
+
+    # Only add default -pl if test_cmd doesn't already specify it
+    # This avoids duplicate -pl flags for multi-module projects
+    if test_cmd and "-pl" in test_cmd:
+        # test_cmd already has -pl specification (e.g., "-pl gson")
+        # Don't add our own -pl
+        pass
+    else:
+        # Single-module project or no -pl specified, use current directory
+        cmd.append("-pl")
+        cmd.append(".")
 
     if test_cmd:
         cmd.extend(test_cmd.split())
@@ -118,14 +131,45 @@ def _is_java_project(project_name):
     return spec.get("language", "").lower() == "java"
 
 
-def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None):
-    """Run tests — dispatches to Maven or pytest based on project language."""
-    if _is_java_project(project_name):
-        return _run_java_tests(project_name, project_path, test_file_paths,
-                               envs=envs, test_cmd=test_cmd, timeout=timeout)
-    else:
-        return _run_python_tests(project_name, project_path, test_file_paths,
-                                 envs=envs, test_cmd=test_cmd, timeout=timeout)
+def run_project_tests(project_name, project_path, test_file_paths, envs={}, test_cmd="", timeout=None, capture_output=True):
+    """
+    Run tests using the appropriate test runner for the project's language.
+
+    This function uses the OOP TestRunner framework to dispatch test execution
+    based on the project's language field in repo_list.json.
+
+    Args:
+        project_name: Name of the project
+        project_path: Path to the project directory
+        test_file_paths: List of test file paths or identifiers
+        envs: Environment variables to set
+        test_cmd: Additional test command arguments
+        timeout: Timeout in seconds (uses runner's default if None)
+        capture_output: If True, capture output; if False, stream to console
+
+    Returns:
+        (success: bool, output: str)
+    """
+    try:
+        # Create appropriate test runner based on project language
+        runner = TestRunnerFactory.create_runner(project_name, project_path)
+
+        # Use runner's default timeout if not specified
+        if timeout is None:
+            timeout = runner.get_default_timeout()
+
+        # Run tests
+        return runner.run_tests(
+            test_file_paths=test_file_paths,
+            envs=envs,
+            test_cmd=test_cmd,
+            timeout=timeout,
+            capture_output=capture_output,
+        )
+    except ValueError as e:
+        error_msg = f"Error creating test runner: {e}"
+        print(error_msg)
+        return False, error_msg
 
 
 def replace_and_test_caller(
