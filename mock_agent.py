@@ -175,9 +175,10 @@ The smell has been successfully injected and is ready for testing."""
                             if reset_result.returncode != 0:
                                 print(f"[MockAgent] Warning: git reset failed: {reset_result.stderr}")
 
-                            # Clean untracked files
+                            # Clean untracked files (exclude Go cache directories)
+                            clean_cmd = ['git', 'clean', '-fd', '-e', '.gocache', '-e', '.gomodcache']
                             clean_result = subprocess.run(
-                                ['git', 'clean', '-fd'],
+                                clean_cmd,
                                 cwd=repo_path,
                                 capture_output=True,
                                 text=True

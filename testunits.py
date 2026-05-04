@@ -10,13 +10,25 @@ import uuid
 # Import new OOP test runner framework
 from test_runners import TestRunnerFactory
 
-def reset_repository(repo_path, commit_hash=None):
-    """Reset the git repository to a clean state at the given commit."""
+def reset_repository(repo_path, commit_hash=None, exclude_go_cache=True):
+    """Reset the git repository to a clean state at the given commit.
+
+    Args:
+        repo_path: Path to the repository
+        commit_hash: Commit to reset to (default: HEAD)
+        exclude_go_cache: If True, preserve .gocache and .gomodcache directories (default: True)
+    """
     try:
         commit_hash = 'HEAD' if commit_hash is None else commit_hash
         subprocess.run(['git', 'reset', '--hard', commit_hash], cwd=repo_path, check=True)
-        # Use -e to exclude Go cache directories (they speed up subsequent builds)
-        subprocess.run(['git', 'clean', '-fd', '-e', '.gocache', '-e', '.gomodcache'], cwd=repo_path, check=True)
+
+        # Build git clean command
+        clean_cmd = ['git', 'clean', '-fd']
+        if exclude_go_cache:
+            # Exclude Go cache directories to speed up subsequent builds
+            clean_cmd.extend(['-e', '.gocache', '-e', '.gomodcache'])
+
+        subprocess.run(clean_cmd, cwd=repo_path, check=True)
         return True
     except subprocess.CalledProcessError:
         print(f"Error resetting repository at {repo_path}")

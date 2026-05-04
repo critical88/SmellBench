@@ -6,7 +6,7 @@ set -e
 # Check if project name is provided
 if [ -z "$1" ]; then
     echo "Usage: bash run_smell_benchmark.sh <project-name> --agent <agent_type> [--force] [--model MODEL] [--base-url URL]"
-    echo "Supported agents: claude_code, qwen_code, openhands, codex"
+    echo "Supported agents: claude_code, qwen_code, openhands, codex, mock, test"
     exit 1
 fi
 
@@ -48,26 +48,26 @@ echo "======================================="
 # ---------------------------------------------------------------------------
 # Step 1: Ensure AST analysis is done (prerequisite for function-test mapping)
 # ---------------------------------------------------------------------------
-MAPPING_FILE="output/${PROJECT_NAME}/function_testunit_mapping.json"
-if [ ! -f "$MAPPING_FILE" ]; then
-    echo "Step 1: AST-based Analysis (function_testunit_mapping.json not found)"
-    conda run -n testbed python -u ast_analyze.py --project-name "${PROJECT_NAME}"
-else
-    echo "Step 1: AST-based Analysis (skipped, mapping already exists)"
-fi
+# Skip AST analysis - smell_benchmark.py handles it automatically when needed
+echo "Step 1: AST-based Analysis (skipped, handled by smell_benchmark.py)"
 
 # ---------------------------------------------------------------------------
 # Step 2: Install the code agent CLI via its dedicated install script
 # ---------------------------------------------------------------------------
-INSTALL_SCRIPT="scripts/install_${AGENT_TYPE}.sh"
-if [ ! -f "$INSTALL_SCRIPT" ]; then
-    echo "ERROR: Install script not found: ${INSTALL_SCRIPT}"
-    echo "Supported agents: claude_code, qwen_code, openhands, codex"
-    exit 1
-fi
+# Mock agent doesn't need installation - skip for mock and test agents
+if [ "${AGENT_TYPE}" = "mock" ] || [ "${AGENT_TYPE}" = "test" ]; then
+    echo "Step 2: Installing agent (skipped for ${AGENT_TYPE})"
+else
+    INSTALL_SCRIPT="scripts/install_${AGENT_TYPE}.sh"
+    if [ ! -f "$INSTALL_SCRIPT" ]; then
+        echo "ERROR: Install script not found: ${INSTALL_SCRIPT}"
+        echo "Supported agents: claude_code, qwen_code, openhands, codex, mock, test"
+        exit 1
+    fi
 
-echo "Step 2: Installing agent (${INSTALL_SCRIPT})"
-bash "${INSTALL_SCRIPT}"
+    echo "Step 2: Installing agent (${INSTALL_SCRIPT})"
+    bash "${INSTALL_SCRIPT}"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 3: Run smell benchmark pipeline

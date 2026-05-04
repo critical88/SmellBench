@@ -214,7 +214,12 @@ def install_repo(spec, project_path="../project"):
     if process.returncode == 0:
         print(f"checkout {repo_name} success")
 
-    process = _run_git_command(["clean", "-xdf"], cwd=cwd)
+    # Clean untracked files, excluding Go cache directories for Go projects
+    if language == "go":
+        clean_cmd = ["clean", "-xdf", "-e", ".gocache", "-e", ".gomodcache"]
+    else:
+        clean_cmd = ["clean", "-xdf"]
+    process = _run_git_command(clean_cmd, cwd=cwd)
     if process.returncode == 0:
         print(f"clean {repo_name} success")
 
