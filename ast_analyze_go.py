@@ -1,14 +1,14 @@
 """
-Go function-to-test mapping using coverage analysis.
+Go function-to-test mapping using aggregate coverage analysis.
 """
 import json
 import os
 import re
 import subprocess
 import sys
-from pathlib import Path
-from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Set
 
 
 @dataclass
@@ -18,7 +18,7 @@ class GoFunctionInfo:
     filepath: Path
     start_line: int
     end_line: int
-    receiver: str = None  # For methods, e.g., "*Context"
+    receiver: str = None
 
 
 def get_spec(project_name: str) -> dict:
@@ -30,180 +30,199 @@ def get_spec(project_name: str) -> dict:
 
 
 def build_go_function_index(src_root: Path, package_prefix: str) -> Dict[str, GoFunctionInfo]:
-    """Build index of all functions in Go source files.
-
-    Returns:
-        Dict mapping "package.FunctionName" or "package.Type.MethodName" to function info
-    """
+    """Build index of exported functions in Go source files."""
     function_index = {}
 
-    # Find all .go files (excluding _test.go)
     for go_file in src_root.rglob("*.go"):
         if go_file.name.endswith("_test.go"):
             continue
 
         try:
-            with open(go_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except:
+            content = go_file.read_text(encoding="utf-8")
+        except Exception:
             continue
 
-        # Extract package name
-        pkg_match = re.search(r'^package\s+(\w+)', content, re.MULTILINE)
+        pkg_match = re.search(r"^package\s+(\w+)", content, re.MULTILINE)
         if not pkg_match:
             continue
         pkg_name = pkg_match.group(1)
 
-        # Find all function declarations
-        # Matches: func Name(...) or func (receiver Type) Name(...)
-        func_pattern = r'^func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)\s*\('
+        func_pattern = re.compile(
+            r"^func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)\s*\(",
+            re.MULTILINE,
+        )
+        lines = content.splitlines()
 
-        lines = content.split('\n')
         for i, line in enumerate(lines, start=1):
-            match = re.match(func_pattern, line)
-            if match:
-                receiver_name, receiver_type, func_name = match.groups()
+            match = func_pattern.match(line)
+            if not match:
+                continue
 
-                # Skip private functions (lowercase first letter) unless they're test helpers
-                if func_name[0].islower() and not func_name.startswith("test"):
-                    continue
+            _, receiver_type, func_name = match.groups()
+            if not func_name:
+                continue
 
-                # Find end line (simplified - just look for closing brace)
-                end_line = find_function_end(lines, i - 1)
+            end_line = find_function_end(lines, i - 1)
+            if receiver_type:
+                func_key = f"{pkg_name}.{receiver_type}.{func_name}"
+            else:
+                func_key = f"{pkg_name}.{func_name}"
 
-                # Build function key
-                if receiver_type:
-                    # Method: "package.Type.MethodName"
-                    func_key = f"{pkg_name}.{receiver_type}.{func_name}"
-                else:
-                    # Function: "package.FunctionName"
-                    func_key = f"{pkg_name}.{func_name}"
-
-                function_index[func_key] = GoFunctionInfo(
-                    name=func_name,
-                    filepath=go_file,
-                    start_line=i,
-                    end_line=end_line,
-                    receiver=receiver_type
-                )
+            function_index[func_key] = GoFunctionInfo(
+                name=func_name,
+                filepath=go_file.resolve(),
+                start_line=i,
+                end_line=end_line,
+                receiver=receiver_type,
+            )
 
     return function_index
 
 
 def find_function_end(lines: List[str], start_idx: int) -> int:
-    """Find the end line of a function by counting braces."""
+    """Find function end by brace counting."""
     depth = 0
     found_open = False
 
     for i in range(start_idx, len(lines)):
-        line = lines[i]
-        # Simple brace counting (doesn't handle strings/comments perfectly)
-        for ch in line:
-            if ch == '{':
+        for ch in lines[i]:
+            if ch == "{":
                 depth += 1
                 found_open = True
-            elif ch == '}':
+            elif ch == "}":
                 depth -= 1
                 if found_open and depth == 0:
-                    return i + 1  # 1-indexed
+                    return i + 1
 
     return start_idx + 1
 
 
 def discover_test_functions(test_root: Path) -> List[str]:
-    """Discover all test functions in *_test.go files.
-
-    Returns:
-        List of test function names (e.g., ["TestGinRun", "TestContextGet"])
-    """
+    """Discover all top-level Go test functions."""
     test_functions = []
+    test_pattern = re.compile(r"^func\s+(Test\w+)\s*\(", re.MULTILINE)
 
     for test_file in test_root.rglob("*_test.go"):
         try:
-            with open(test_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except:
+            content = test_file.read_text(encoding="utf-8")
+        except Exception:
             continue
 
-        # Find test functions: func TestXxx(t *testing.T)
-        test_pattern = r'^func\s+(Test\w+)\s*\('
-        for match in re.finditer(test_pattern, content, re.MULTILINE):
-            test_name = match.group(1)
-            test_functions.append(test_name)
+        test_functions.extend(match.group(1) for match in test_pattern.finditer(content))
 
-    return test_functions
+    return sorted(set(test_functions))
 
 
-def run_tests_with_coverage(project_root: Path, coverage_file: Path) -> bool:
-    """Run all tests with coverage collection.
+def _go_env(project_root: Path) -> Dict[str, str]:
+    """Get Go environment variables with custom cache paths."""
+    env = os.environ.copy()
+    env["GOCACHE"] = str((project_root / ".gocache").resolve())
+    env["GOMODCACHE"] = str((project_root / ".gomodcache").resolve())
+    return env
 
-    Args:
-        project_root: Root directory of Go project
-        coverage_file: Output path for coverage profile
 
-    Returns:
-        True if tests ran successfully
+def cleanup_go_caches(project_root: Path):
+    """Clean up Go cache directories with proper permission handling.
+
+    NOTE: This function is intentionally disabled. Go caches (.gocache, .gomodcache)
+    should be kept to speed up subsequent builds and tests. They are automatically
+    managed by Go and don't need manual cleanup.
     """
-    # Remove old coverage file
+    # Cache cleanup is disabled - Go caches speed up subsequent operations
+    # and are automatically managed by Go itself
+    pass
+
+
+def run_tests_with_coverage(project_root: Path, coverage_file: Path, test_cmd: str = "") -> bool:
+    """Run Go tests with aggregate coverage."""
     if coverage_file.exists():
         coverage_file.unlink()
 
     coverage_file.parent.mkdir(parents=True, exist_ok=True)
+    env = _go_env(project_root)
 
-    # Run tests with coverage for all packages
+    # Download dependencies first (silent)
+    subprocess.run(
+        ["go", "mod", "download"],
+        cwd=str(project_root),
+        env=env,
+        timeout=300,
+        check=False,
+    )
+
     cmd = [
         "go", "test",
-        "-coverprofile=" + str(coverage_file),
+        f"-coverprofile={coverage_file}",
         "-covermode=set",
-        "./...",  # All packages
+        "-timeout=10m",
     ]
+    if test_cmd:
+        cmd.extend(test_cmd.split())
+    cmd.append("./...")
 
     print(f"Running: {' '.join(cmd)}")
-
+    # Don't capture output - let it stream to console like Java version
     result = subprocess.run(
         cmd,
         cwd=str(project_root),
-        capture_output=True,
-        text=True,
-        timeout=300,
+        env=env,
+        timeout=600,
+        check=False,
     )
 
     if result.returncode != 0:
-        print(f"Warning: tests failed with exit code {result.returncode}")
-        print(f"Stderr: {result.stderr[-500:]}")
+        print(f"Warning: go test exited with code {result.returncode}")
 
-    return coverage_file.exists()
-
-
-def parse_go_coverage(coverage_file: Path, src_root: Path) -> Dict[Path, Set[int]]:
-    """Parse Go coverage profile to get covered lines per file.
-
-    Returns:
-        Dict mapping file paths to set of covered line numbers
-    """
-    covered_lines = {}
+    if not coverage_file.exists():
+        return False
 
     try:
-        with open(coverage_file, 'r') as f:
+        if coverage_file.read_text(encoding="utf-8").strip() == "mode: set":
+            return False
+    except Exception:
+        return False
+
+    return True
+
+
+def parse_go_coverage(
+    coverage_file: Path,
+    src_root: Path,
+    package_prefix: str,
+) -> Dict[Path, Set[int]]:
+    """Parse Go coverage profile into covered lines by absolute file path."""
+    covered_lines: Dict[Path, Set[int]] = {}
+
+    # Pre-build filename index to avoid repeated rglob calls
+    print("Building filename index...")
+    filename_index: Dict[str, List[Path]] = {}
+    for go_file in src_root.rglob("*.go"):
+        filename = go_file.name
+        filename_index.setdefault(filename, []).append(go_file.resolve())
+    print(f"Indexed {len(filename_index)} unique filenames")
+
+    total_entries = 0
+    covered_entries = 0
+    skipped_entries = 0
+
+    try:
+        with coverage_file.open("r", encoding="utf-8") as f:
             for line in f:
-                # Skip mode line
                 if line.startswith("mode:"):
                     continue
 
-                # Format: github.com/gin-gonic/gin/binding.go:45.13,47.2 1 1
-                # Last number is count (0 = not covered, >0 = covered)
+                total_entries += 1
                 parts = line.strip().split()
                 if len(parts) < 3:
                     continue
 
                 location = parts[0]
                 count = int(parts[2])
-
                 if count == 0:
-                    continue  # Not covered
+                    continue
 
-                # Parse file:startLine.startCol,endLine.endCol
-                match = re.match(r'(.+):(\d+)\.\d+,(\d+)\.\d+', location)
+                covered_entries += 1
+                match = re.match(r"(.+):(\d+)\.\d+,(\d+)\.\d+", location)
                 if not match:
                     continue
 
@@ -211,39 +230,49 @@ def parse_go_coverage(coverage_file: Path, src_root: Path) -> Dict[Path, Set[int
                 start_line = int(start_line)
                 end_line = int(end_line)
 
-                # Convert package path to file path
-                # e.g., github.com/gin-gonic/gin/binding.go -> ./binding.go
-                file_name = file_path.split('/')[-1]
+                relative_path = None
+                if package_prefix and file_path.startswith(package_prefix + "/"):
+                    relative_path = file_path[len(package_prefix) + 1:]
+                else:
+                    parts_list = file_path.split("/")
+                    if len(parts_list) > 3:
+                        relative_path = "/".join(parts_list[3:])
 
-                # Find the actual file in src_root
-                for actual_file in src_root.rglob(f"**/{file_name}"):
-                    if actual_file not in covered_lines:
-                        covered_lines[actual_file] = set()
+                # Try direct path first
+                actual_file = None
+                if relative_path:
+                    candidate = (src_root / relative_path).resolve()
+                    if candidate.exists():
+                        actual_file = candidate
 
-                    # Add all lines in range
-                    for line_num in range(start_line, end_line + 1):
-                        covered_lines[actual_file].add(line_num)
-                    break
+                # Fallback: use filename index
+                if actual_file is None:
+                    filename = file_path.split("/")[-1]
+                    candidates = filename_index.get(filename, [])
+                    if candidates:
+                        actual_file = candidates[0]  # Use first match
 
+                if actual_file is None:
+                    skipped_entries += 1
+                    continue
+
+                file_lines = covered_lines.setdefault(actual_file, set())
+                for line_num in range(start_line, end_line + 1):
+                    file_lines.add(line_num)
     except Exception as e:
         print(f"Error parsing coverage: {e}")
 
+    print(f"Coverage parsing: {total_entries} total entries, {covered_entries} covered, {skipped_entries} skipped")
     return covered_lines
 
 
 def is_function_covered(func_info: GoFunctionInfo, covered_lines: Dict[Path, Set[int]]) -> bool:
-    """Check if a function has any coverage."""
-    if func_info.filepath not in covered_lines:
+    """Check whether any line in the function range is covered."""
+    file_covered = covered_lines.get(func_info.filepath.resolve())
+    if not file_covered:
         return False
 
-    file_covered = covered_lines[func_info.filepath]
-
-    # Check if any line in the function's range is covered
-    for line_num in range(func_info.start_line, func_info.end_line + 1):
-        if line_num in file_covered:
-            return True
-
-    return False
+    return any(line_num in file_covered for line_num in range(func_info.start_line, func_info.end_line + 1))
 
 
 def generate_go_function_mapping(
@@ -252,14 +281,7 @@ def generate_go_function_mapping(
     output_dir: str = None,
     max_tests: int = None,
 ) -> int:
-    """Generate function-to-test mapping for Go project.
-
-    Args:
-        project_name: Project name
-        project_path: Path to project directory
-        output_dir: Output directory for JSON
-        max_tests: Not used for Go (runs all tests together)
-    """
+    """Generate function-to-test mapping for Go project."""
     repo_spec = get_spec(project_name)
     if not repo_spec:
         print(f"Project {project_name} not found")
@@ -269,77 +291,63 @@ def generate_go_function_mapping(
         print(f"Project {project_name} is not a Go project")
         return 1
 
-    project_root = Path(project_path) / project_name
+    project_root = (Path(project_path) / project_name).resolve()
     src_path = repo_spec.get("src_path", ".")
     commit_id = repo_spec.get("commit_id", "")
     package_prefix = repo_spec.get("package_prefix", "")
-
+    test_cmd = repo_spec.get("test_cmd", "")
     src_root = (project_root / src_path).resolve()
 
     print(f"Project: {project_name}")
     print(f"Source root: {src_root}")
 
-    # Step 1: Build function index
     print("Building function index...")
     function_index = build_go_function_index(src_root, package_prefix)
     print(f"Found {len(function_index)} functions")
 
-    # Step 2: Discover test functions
     print("Discovering test functions...")
     test_functions = discover_test_functions(src_root)
     print(f"Found {len(test_functions)} test functions")
 
-    if not test_functions:
-        print("Warning: No test functions found")
-
-    # Step 3: Run tests with coverage
     print("Running tests with coverage...")
-    coverage_file = project_root / "coverage.out"
-
-    if not run_tests_with_coverage(project_root, coverage_file):
-        print("ERROR: Failed to generate coverage file")
+    coverage_file = (project_root / "coverage.out").resolve()
+    if not run_tests_with_coverage(project_root, coverage_file, test_cmd=test_cmd):
+        print("ERROR: Failed to generate non-empty coverage file")
         return 1
 
     print(f"Coverage file generated: {coverage_file}")
-
-    # Step 4: Parse coverage
     print("Parsing coverage...")
-    covered_lines = parse_go_coverage(coverage_file, src_root)
+    covered_lines = parse_go_coverage(coverage_file, src_root, package_prefix)
     print(f"Found coverage for {len(covered_lines)} files")
 
-    # Step 5: Build mapping
     print("Building function-to-test mapping...")
     functions = {}
-
     for func_key, func_info in function_index.items():
         if is_function_covered(func_info, covered_lines):
-            # Map to all test functions (simplified approach)
             functions[func_key] = {
                 "file": str(func_info.filepath),
                 "relative_file": str(func_info.filepath.relative_to(src_root)),
                 "line_range": [func_info.start_line, func_info.end_line],
                 "tests": test_functions,
-                "coverage_type": "aggregate"
+                "coverage_type": "aggregate",
             }
 
     print(f"Mapped {len(functions)} functions to tests")
-
-    # Check if we have any mappings
     if not functions:
         print("ERROR: No function coverage collected. Functions field is empty.")
         return 1
 
-    # Step 6: Export JSON
     if output_dir is None:
         output_dir = f"output/{project_name}"
 
-    Path(output_dir).mkdir(parents=True, exist_ok=True)
-    output_json = Path(output_dir) / "function_testunit_mapping.json"
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+    output_json = output_dir_path / "function_testunit_mapping.json"
 
     payload = {
         "meta": {
             "src_path": src_path,
-            "test_path": src_path,  # Go tests are in same directory
+            "test_path": src_path,
             "commit_id": commit_id,
             "language": "go",
             "note": "Simplified mapping - all covered functions map to all tests",
@@ -347,7 +355,7 @@ def generate_go_function_mapping(
         "functions": functions,
     }
 
-    with open(output_json, "w") as f:
+    with output_json.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
     print(f"Wrote mapping to {output_json}")
@@ -357,4 +365,4 @@ def generate_go_function_mapping(
 
 if __name__ == "__main__":
     project = sys.argv[1] if len(sys.argv) > 1 else "gin"
-    exit(generate_go_function_mapping(project, "../project", f"output/{project}"))
+    sys.exit(generate_go_function_mapping(project, "../project", f"output/{project}"))

@@ -453,6 +453,114 @@ def _strip_strings_and_comments(line: str) -> str:
 # Unified interface
 # ---------------------------------------------------------------------------
 
+def extract_modified_functions_go(
+    diff_content: str,
+    repo_path: str,
+    verbose: bool = False,
+) -> List[Tuple[str, str, str]]:
+    """Extract modified Go functions from a diff.
+
+    Args:
+        diff_content: Unified diff string
+        repo_path: Repository root path
+        verbose: If True, print debug information
+
+    Returns:
+        List of (file_path, receiver_type, function_name) tuples.
+        For methods: receiver_type is the type name (e.g., "Context")
+        For functions: receiver_type is empty string
+    """
+    changed_files = parse_diff_changed_lines(diff_content)
+    if verbose:
+        print(f"  [DEBUG] Found {len(changed_files)} changed files in diff")
+
+    modified_functions: List[Tuple[str, str, str]] = []
+
+    for file_path, info in changed_files.items():
+        if not file_path.endswith('.go'):
+            continue
+
+        new_lines: Set[int] = info.get('new_lines', set())
+        hunk_ranges: List[Tuple[int, int]] = info.get('hunk_ranges', [])
+
+        if not new_lines and not hunk_ranges:
+            continue
+
+        # Read source file
+        abs_path = Path(repo_path) / file_path
+        if not abs_path.exists():
+            continue
+
+        try:
+            source = abs_path.read_text(encoding='utf-8')
+        except Exception as e:
+            print(f"  Warning: failed to read {file_path}: {e}")
+            continue
+
+        source_lines = source.splitlines()
+        seen = set()
+
+        # Go function pattern: func Name(...) or func (receiver Type) Name(...)
+        # Match both regular functions and methods
+        func_pattern = re.compile(
+            r'^func\s+(?:\((\w+)\s+\*?(\w+)\)\s+)?(\w+)\s*\(',
+            re.MULTILINE
+        )
+
+        for match in func_pattern.finditer(source):
+            _, receiver_type, func_name = match.groups()
+            receiver_type = receiver_type or ""  # Empty string for regular functions
+
+            # Find which line this match is on
+            start_line = source[:match.start()].count('\n') + 1
+
+            # Estimate end line by counting braces
+            end_line = _estimate_go_end_line(source_lines, start_line)
+
+            # Check overlap with changed lines
+            line_hit = any(start_line <= ln <= end_line for ln in new_lines)
+            hunk_hit = any(
+                r_start <= end_line and r_end >= start_line
+                for r_start, r_end in hunk_ranges
+            )
+
+            if line_hit or hunk_hit:
+                key = (file_path, receiver_type, func_name)
+                if key not in seen:
+                    seen.add(key)
+                    modified_functions.append(key)
+                    if verbose:
+                        if receiver_type:
+                            print(f"    [DEBUG] Modified method: {receiver_type}.{func_name} "
+                                  f"(lines {start_line}-{end_line})")
+                        else:
+                            print(f"    [DEBUG] Modified function: {func_name} "
+                                  f"(lines {start_line}-{end_line})")
+
+    return modified_functions
+
+
+def _estimate_go_end_line(source_lines: List[str], start_line: int) -> int:
+    """Estimate the end line of a Go function by counting braces."""
+    depth = 0
+    found_open = False
+
+    for i in range(start_line - 1, len(source_lines)):
+        line = source_lines[i]
+        # Simple brace counting (doesn't handle strings/comments perfectly)
+        for ch in line:
+            if ch == '{':
+                depth += 1
+                found_open = True
+            elif ch == '}':
+                depth -= 1
+                if found_open and depth == 0:
+                    return i + 1  # 1-indexed
+
+    # Fallback if we didn't find closing brace
+    return min(start_line + 50, len(source_lines))
+
+
 def extract_modified_functions(
     diff_content: str,
     repo_path: str,
@@ -475,6 +583,8 @@ def extract_modified_functions(
         return extract_modified_functions_python(diff_content, repo_path, verbose=verbose)
     elif language == "java":
         return extract_modified_functions_java(diff_content, repo_path, verbose=verbose)
+    elif language == "go":
+        return extract_modified_functions_go(diff_content, repo_path, verbose=verbose)
     else:
         raise ValueError(f"Unsupported language: {language}")
 

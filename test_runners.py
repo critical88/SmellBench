@@ -247,12 +247,83 @@ class JavaTestRunner(TestRunner):
             return False, error_msg
 
 
+class GoTestRunner(TestRunner):
+    """Test runner for Go projects using go test."""
+
+    def get_default_timeout(self) -> int:
+        return 120
+
+    def run_tests(
+        self,
+        test_file_paths: List[str],
+        envs: Optional[Dict[str, str]] = None,
+        test_cmd: str = "",
+        timeout: Optional[int] = None,
+        capture_output: bool = True,
+    ) -> Tuple[bool, str]:
+        if timeout is None:
+            timeout = self.get_default_timeout()
+
+        try:
+            with pushd(self.project_path):
+                exec_env = self._prepare_env(envs)
+                exec_env.setdefault("GOCACHE", str((Path(self.project_path) / ".gocache").resolve()))
+                exec_env.setdefault("GOMODCACHE", str((Path(self.project_path) / ".gomodcache").resolve()))
+
+                cmd = ["go", "test"]
+                if test_cmd:
+                    cmd.extend(test_cmd.split())
+
+                # For Go, test_file_paths contains test names (e.g., TestFoo, TestBar)
+                # We need to use -run flag to select specific tests
+                if test_file_paths:
+                    # Join test names with | to create a regex pattern
+                    # Use ^(name1|name2|...)$ to match exact test names
+                    test_pattern = "^(" + "|".join(test_file_paths) + ")$"
+                    cmd.extend(["-run", test_pattern])
+                    # Run tests in all packages
+                    cmd.append("./...")
+                else:
+                    cmd.append("./...")
+
+                _log(f"Running Go tests: {' '.join(cmd)}", DEBUG_LOG_LEVEL)
+                result = subprocess.run(
+                    cmd,
+                    cwd=".",
+                    capture_output=capture_output,
+                    text=True,
+                    env=exec_env,
+                    timeout=timeout,
+                )
+
+                success = result.returncode == 0
+                if capture_output:
+                    output = (result.stdout or "") + "\n" + (result.stderr or "")
+                else:
+                    output = "(output streamed to console)"
+
+                if not success and capture_output:
+                    _log(f"Go tests failed: {output}", DEBUG_LOG_LEVEL)
+
+                return success, output
+
+        except subprocess.TimeoutExpired:
+            error_msg = f"Go test execution timed out after {timeout}s"
+            print(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Error running Go tests: {e}"
+            print(error_msg)
+            return False, error_msg
+
+
 class TestRunnerFactory:
     """Factory for creating test runners based on project language."""
 
     _runners = {
         "python": PythonTestRunner,
         "java": JavaTestRunner,
+        "go": GoTestRunner,
     }
 
     @classmethod

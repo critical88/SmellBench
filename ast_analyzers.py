@@ -86,7 +86,8 @@ class PythonASTAnalyzer(ASTAnalyzer):
             project_root = str(Path(self.project_path).parent)
             result = generate_function_mapping(
                 project_name=self.project_name,
-                project_path=project_root
+                project_path=project_root,
+                output_file=self.output_file
             )
 
             if result == 0 and self.mapping_exists():
@@ -149,12 +150,48 @@ class JavaASTAnalyzer(ASTAnalyzer):
             return False
 
 
+class GoASTAnalyzer(ASTAnalyzer):
+    """AST analyzer for Go projects using go test coverage."""
+
+    def get_language(self) -> str:
+        return "go"
+
+    def generate_mapping(self) -> bool:
+        try:
+            from ast_analyze_go import generate_go_function_mapping
+
+            print(f"[GoASTAnalyzer] Generating mapping for {self.project_name}...")
+            print(f"[GoASTAnalyzer] Project path: {self.project_path}")
+            print(f"[GoASTAnalyzer] Output: {self.output_file}")
+
+            project_root = str(Path(self.project_path).parent)
+            result = generate_go_function_mapping(
+                project_name=self.project_name,
+                project_path=project_root,
+                output_dir=self.output_dir,
+            )
+
+            if result == 0 and self.mapping_exists():
+                print(f"[GoASTAnalyzer] ✓ Mapping generated successfully")
+                return True
+            else:
+                print(f"[GoASTAnalyzer] ✗ Mapping generation failed")
+                return False
+
+        except Exception as e:
+            print(f"[GoASTAnalyzer] Error generating mapping: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
 class ASTAnalyzerFactory:
     """Factory for creating AST analyzers based on project language."""
 
     _analyzers = {
         "python": PythonASTAnalyzer,
         "java": JavaASTAnalyzer,
+        "go": GoASTAnalyzer,
     }
 
     @classmethod

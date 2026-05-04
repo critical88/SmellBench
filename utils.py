@@ -220,12 +220,14 @@ def install_repo(spec, project_path="../project"):
 
     # Determine build command based on language
     if language == "java":
-        # For Java projects, use Maven
         build_cmd = ["mvn clean install -DskipTests"]
         if "build_cmd" in spec:
             build_cmd = spec['build_cmd']
+    elif language == "go":
+        build_cmd = ["go build ./..."]
+        if "build_cmd" in spec:
+            build_cmd = spec['build_cmd']
     else:
-        # For Python projects, use pip
         build_cmd = ["pip install -e ."]
         if "build_cmd" in spec:
             build_cmd = spec['build_cmd']
@@ -236,21 +238,20 @@ def install_repo(spec, project_path="../project"):
     build_cmd = [bc.split(" ") if isinstance(bc, str) else bc for bc in build_cmd]
     print(f"installing/building {repo_name} (language: {language}) ...")
 
-    if language == "java":
-        # For Java, run Maven directly (no conda)
-        import subprocess
+    if language in ("java", "go"):
+        env = os.environ.copy()
+        if language == "go":
+            env["GOCACHE"] = os.path.abspath(os.path.join(cwd, ".gocache"))
+            env["GOMODCACHE"] = os.path.abspath(os.path.join(cwd, ".gomodcache"))
+            subprocess.run(["go", "mod", "download"], cwd=cwd, capture_output=True, text=True, env=env)
         for cmd in build_cmd:
-            if isinstance(cmd, list):
-                cmd_list = cmd
-            else:
-                cmd_list = cmd.split(" ")
-            process = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True)
+            cmd_list = cmd if isinstance(cmd, list) else cmd.split(" ")
+            process = subprocess.run(cmd_list, cwd=cwd, capture_output=True, text=True, env=env)
             print(process.stdout)
             if process.returncode != 0:
                 print(f"Build command failed: {' '.join(cmd_list)}")
                 print(process.stderr)
     else:
-        # For Python, use conda
         process = conda_exec_cmd(build_cmd, spec, cwd=cwd, use_shell=True)
 
     if isinstalled(spec):
@@ -266,13 +267,13 @@ def isinstalled(spec):
 
     For Python projects: checks pip show for editable installation
     For Java projects: checks if Maven build artifacts exist (target/classes)
+    For Go projects: checks if go.mod exists and dependencies/build cache can be prepared
     """
     language = spec.get("language", "python").lower()
 
     if language == "java":
         # For Java projects, check if Maven build was successful
         # by looking for the target/classes directory
-        import os
         repo_name = spec['name']
         project_path = spec.get("project_path", "../project")
         repo_root = os.path.join(project_path, repo_name)
@@ -300,7 +301,6 @@ def isinstalled(spec):
         # Check each possible location
         for target_dir in possible_targets:
             if os.path.exists(target_dir) and os.path.isdir(target_dir):
-                # Check if there are any .class files
                 class_files = []
                 for root, dirs, files in os.walk(target_dir):
                     class_files.extend([f for f in files if f.endswith('.class')])
@@ -312,23 +312,28 @@ def isinstalled(spec):
 
         return False
 
-    else:
-        # For Python projects, check pip installation
-        repo_name = get_repo_name(spec)
-        cmd = f"pip show {repo_name}"
-        process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
-
-        if process.returncode == 0:
-            if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
-                return True
-
+    if language == "go":
         repo_name = spec['name']
-        cmd = f"pip show {repo_name}"
-        process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
-        if process.returncode == 0:
-            if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
-                return True
-        return False
+        project_path = spec.get("project_path", "../project")
+        repo_root = os.path.join(project_path, repo_name)
+        return os.path.exists(os.path.join(repo_root, "go.mod"))
+
+    # For Python projects, check pip installation
+    repo_name = get_repo_name(spec)
+    cmd = f"pip show {repo_name}"
+    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
+
+    if process.returncode == 0:
+        if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
+            return True
+
+    repo_name = spec['name']
+    cmd = f"pip show {repo_name}"
+    process = conda_exec_cmd(cmd.split(" "), spec, capture_output=True)
+    if process.returncode == 0:
+        if any([line.startswith("Editable project location") for line in process.stdout.split("\n")]):
+            return True
+    return False
 
 def download_repo(spec, project_path="../project"):
     repo_name = spec['name']

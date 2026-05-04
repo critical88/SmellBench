@@ -966,10 +966,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default= "../project",
         help="Path to the click project. Defaults to ../project relative to this file.",
     )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Path to output function_testunit_mapping.json file. Defaults to output/<project-name>/function_testunit_mapping.json",
+    )
     return parser.parse_args(argv)
 
 
-def generate_function_mapping(project_name:str, project_path="../project") -> int:
+def generate_function_mapping(project_name:str, project_path="../project", output_file=None) -> int:
     """Entry point: orchestrate coverage run, graph building, and reporting."""
 
     repo_spec = get_spec(project_name)
@@ -991,18 +997,26 @@ def generate_function_mapping(project_name:str, project_path="../project") -> in
         print(f"environment different, redirected to {target_conda_env}")
         # subprocess.run(["pytest", "-q"])
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
-        subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "python", "ast_analyze.py", "--project-name", project_name], text=True)
-        return 
-    
-    
+        cmd = ["conda", "run", "-n", target_conda_env, "--live-stream", "python", "ast_analyze.py", "--project-name", project_name]
+        if output_file:
+            cmd.extend(["--output-file", str(output_file)])
+        result = subprocess.run(cmd, text=True)
+        return result.returncode
+
+
     commit_id = repo_spec['commit_id']
     if not project_root.exists():
         raise SystemExit(f"Project root {project_root} does not exist.")
     src_root = (project_root / src_path).resolve()
-    
-    output_dir = Path("output") / project_name
-    os.makedirs(output_dir, exist_ok=True)
-    output_json = output_dir / "function_testunit_mapping.json"
+
+    # Use custom output_file if provided, otherwise use default
+    if output_file:
+        output_json = Path(output_file)
+        os.makedirs(output_json.parent, exist_ok=True)
+    else:
+        output_dir = Path("output") / project_name
+        os.makedirs(output_dir, exist_ok=True)
+        output_json = output_dir / "function_testunit_mapping.json"
 
     if output_json.exists():
         print(f"Output file {output_json} already exists.")
@@ -1095,6 +1109,6 @@ def generate_function_mapping(project_name:str, project_path="../project") -> in
 
 if __name__ == "__main__":  # pragma: no cover
     args = parse_args()
-    
-    generate_function_mapping(args.project_name, args.project_root)
+
+    generate_function_mapping(args.project_name, args.project_root, output_file=args.output_file)
     raise SystemExit()

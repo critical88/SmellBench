@@ -58,7 +58,7 @@ def collect_source_files(repo_path: str, src_path: str, language: str = "python"
     Args:
         repo_path: Absolute path to the repository root.
         src_path: Relative path to source code within the repo (e.g. "src/click" or "src/main/java").
-        language: Programming language ("python" or "java"). Defaults to "python".
+        language: Programming language ("python", "java", or "go"). Defaults to "python".
 
     Returns:
         List of dicts sorted by line count descending:
@@ -103,6 +103,16 @@ def collect_source_files(repo_path: str, src_path: str, language: str = "python"
                     continue
                 # Skip abstract test classes
                 if fname.startswith("Abstract") and "Test" in fname:
+                    continue
+            elif language == "go":
+                # Go files
+                if not fname.endswith(".go"):
+                    continue
+                # Skip test files
+                if fname.endswith("_test.go"):
+                    continue
+                # Skip internal/vendor directories (already filtered above, but double-check)
+                if "vendor" in dirpath or "internal" in dirpath:
                     continue
             else:
                 # Python files

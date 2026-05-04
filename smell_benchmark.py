@@ -6,6 +6,7 @@ maps modified functions to unit tests, and produces smell_codes.json.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
@@ -42,7 +43,7 @@ DIFFICULTY_LEVELS = ( "easy", "medium", "hard")
 INSTRUCTION_LEVELS = ("targeted", "guided", "open")
 
 # Difficulty amplifiers appended to the template for hard/expert levels
-SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex")
+SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex", "mock", "test")
 
 DIFFICULTY_AMPLIFIERS = {
     "easy": """### Difficulty Constraints (Easy)
@@ -186,15 +187,23 @@ def generate_smell_analysis(
     smell_description: str = "",
     model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
+    agent: str = "claude_code",
 ) -> Tuple[Optional[str], List[Dict], Dict]:
     """Generate smell analysis and custom rubrics for a case via LLM.
 
     The LLM returns XML-tagged output (<analysis>, <rubric>) which is
     more robust than JSON for long free-text content.
 
+    Args:
+        agent: If "mock" or "test", uses mock responses without API calls
+
     Returns:
         (smell_analysis, custom_rubrics, usage)
     """
+    # Use mock model if agent is mock/test
+    if agent.lower() in ("mock", "test"):
+        model = "mock"
+
     prompt = SMELL_ANALYSIS_PROMPT.format(
         smell_type=smell_type,
         smell_description=smell_description,
@@ -634,6 +643,7 @@ def file_path_to_module(file_path: str, src_path: str, repo_path: str) -> str:
     """Convert an absolute or relative file path to a dotted module path.
 
     E.g. /repo/click/src/click/core.py with src_path=src/click -> click.core
+         /repo/gin/context.go with src_path=. -> gin.context
     """
     # Normalise to relative path within repo
     if os.path.isabs(file_path):
@@ -646,19 +656,27 @@ def file_path_to_module(file_path: str, src_path: str, repo_path: str) -> str:
     rel_parts = Path(rel).parts
 
     # Try to match the src_path prefix
-    if len(rel_parts) >= len(src_parts):
+    if src_parts and len(rel_parts) >= len(src_parts):
         if rel_parts[: len(src_parts)] == src_parts:
             rel_parts = rel_parts[len(src_parts):]
-        else:
-            # The file might already be relative to src_path
-            pass
 
-    # Build module path: remove .py, join with dots
-    # The first component of src_path's last part is the package name
-    package_name = Path(src_path).parts[-1]
+    # Build module path: remove file extension (.py, .java, .go), join with dots
+    # For Go/Java projects with src_path=".", use the repo name as package
+    if src_parts:
+        package_name = src_parts[-1]
+    else:
+        # src_path is "." or empty, use repo name
+        package_name = Path(repo_path).name
+
     module_parts = list(rel_parts)
-    if module_parts and module_parts[-1].endswith(".py"):
-        module_parts[-1] = module_parts[-1][:-3]
+    if module_parts:
+        # Remove common source file extensions
+        if module_parts[-1].endswith(".py"):
+            module_parts[-1] = module_parts[-1][:-3]
+        elif module_parts[-1].endswith(".java"):
+            module_parts[-1] = module_parts[-1][:-5]
+        elif module_parts[-1].endswith(".go"):
+            module_parts[-1] = module_parts[-1][:-3]
     if module_parts and module_parts[-1] == "__init__":
         module_parts = module_parts[:-1]
 
@@ -716,8 +734,13 @@ def find_tests_for_functions(
     src_path: str,
     repo_path: str,
     max_tests_per_func: int = 10,
+    language: str = "python",
 ) -> List[str]:
-    """Look up tests for each test_functions entry. Returns deduplicated list of test paths."""
+    """Look up tests for each test_functions entry. Returns deduplicated list of test paths.
+
+    Args:
+        language: Project language (python, java, go) - affects key format
+    """
     functions_map = mapping.get("functions", {})
     all_tests = []
     seen = set()
@@ -727,22 +750,37 @@ def find_tests_for_functions(
             continue
         file_path, class_name, func_name = func_entry[0], func_entry[1], func_entry[2]
 
-        # Build the key
-        module_path = file_path_to_module(file_path, src_path, repo_path)
-        key = build_function_key(module_path, class_name, func_name)
+        # Build the key based on language
+        if language.lower() == "go":
+            # For Go: use package name (usually project name) directly
+            # Key format: pkg_name.ReceiverType.FuncName or pkg_name.FuncName
+            # Extract package name from repo path
+            pkg_name = Path(repo_path).name
+            if class_name:
+                key = f"{pkg_name}.{class_name}.{func_name}"
+            else:
+                key = f"{pkg_name}.{func_name}"
+        else:
+            # For Python/Java: use module path with : separator
+            module_path = file_path_to_module(file_path, src_path, repo_path)
+            key = build_function_key(module_path, class_name, func_name)
 
         # DEBUG: log the conversion
         print(f"    [DEBUG] Converting function entry:")
         print(f"      file_path: {file_path}")
         print(f"      class_name: {repr(class_name)}")
         print(f"      func_name: {func_name}")
-        print(f"      -> module_path: {module_path}")
+        if language.lower() == "go":
+            print(f"      -> pkg_name: {pkg_name}")
+        else:
+            print(f"      -> module_path: {module_path}")
         print(f"      -> key: {key}")
 
         # Look up in mapping
         func_info = functions_map.get(key)
-        if func_info is None:
+        if func_info is None and language.lower() != "go":
             # Try without class (in case class_name is wrong or None mismatch)
+            # Skip this for Go since the key format is different
             alt_key = build_function_key(module_path, None, func_name)
             print(f"      -> trying alt_key: {alt_key}")
             func_info = functions_map.get(alt_key)
@@ -1002,7 +1040,7 @@ def process_one_smell(
 
     # Find mapped tests
     testsuites = find_tests_for_functions(
-        normalized_test_functions, mapping, src_path, repo_path
+        normalized_test_functions, mapping, src_path, repo_path, language=language
     )
 
     # Record the attempt even if no tests found
@@ -1011,7 +1049,8 @@ def process_one_smell(
 
     if not testsuites:
         print(f"  No tests found for modified functions in {repo_name} / {smell_type}")
-        # Save this attempt with testsuites_found=False
+
+        # Save failure
         save_attempt(
             attempt_dir=attempt_dir,
             trajectory=trajectory,
@@ -1248,6 +1287,7 @@ def process_one_smell(
         smell_description=smell_desc,
         model=model,
         base_url=base_url,
+        agent=agent,
     )
     analysis_duration = time.time() - analysis_start_time
     current_attempt_stats["smell_analysis"]["duration_seconds"] = analysis_duration
@@ -1287,6 +1327,11 @@ def process_one_smell(
 
 def main(args):
     random.seed(args.seed)
+
+    # Auto-enable test mode for mock agent
+    if args.agent.lower() in ("mock", "test") and not args.test:
+        print("[AUTO] Detected mock agent, automatically enabling --test mode")
+        args.test = True
 
     # Load config files
     with open("smell_type.json", "r", encoding="utf-8") as f:
@@ -1330,7 +1375,13 @@ def main(args):
     for repo_name, repo_spec in selected_repos.items():
         repo_spec["name"] = repo_name
         repo_path = os.path.join(project_dir, repo_name)
-        repo_output_dir = os.path.join(output_dir, repo_name)
+
+        # If using mock agent, append _mock to repo name in output directory
+        output_repo_name = repo_name
+        if args.agent.lower() in ("mock", "test"):
+            output_repo_name = f"{repo_name}_mock"
+
+        repo_output_dir = os.path.join(output_dir, output_repo_name)
         os.makedirs(repo_output_dir, exist_ok=True)
 
         # --- Load per-repo code_smells.json for skip logic ---
@@ -1427,6 +1478,12 @@ def main(args):
         mapping_path = os.path.join(repo_output_dir, "function_testunit_mapping.json")
         if not os.path.exists(mapping_path):
             print(f"function_testunit_mapping.json not found for {repo_name}, generating...")
+
+            # Check if this is mock agent and give helpful message
+            if args.agent.lower() in ("mock", "test"):
+                print(f"  Note: Mock agent also requires real function-test mapping")
+                print(f"  Install coverage if needed: pip install coverage")
+
             # Automatically generate mapping using appropriate AST analyzer
             success = ensure_mapping_exists(
                 project_name=repo_name,
@@ -1435,7 +1492,11 @@ def main(args):
                 force_regenerate=False
             )
             if not success:
-                print(f"Failed to generate function_testunit_mapping.json for {repo_name}, skipping")
+                print(f"Failed to generate function_testunit_mapping.json for {repo_name}")
+                if args.agent.lower() in ("mock", "test"):
+                    print(f"  Tip: For quick testing with mock agent, use --test flag to skip mapping generation")
+                    print(f"  Example: python smell_benchmark.py --agent mock --project-name {repo_name} --test")
+                print(f"Skipping {repo_name}")
                 continue
             print(f"Successfully generated function_testunit_mapping.json for {repo_name}")
 
@@ -1451,7 +1512,32 @@ def main(args):
         # Load candidates (pre-computed by find_candidates.py), generate if missing
         candidates_path = os.path.join(repo_output_dir, "candidates.json")
         candidates_data = {}
-        if os.path.exists(candidates_path):
+
+        # If --skip-candidates is set, generate simple candidates automatically
+        if args.skip_candidates:
+            print("  --skip-candidates enabled, generating automatic candidates from eligible files...")
+            from file_collector import collect_source_files
+            language = repo_spec.get("language", "python")
+            eligible_files = collect_source_files(repo_path, repo_spec.get("src_path", ""), language=language)
+
+            if not eligible_files:
+                print(f"  Warning: No eligible files found for {repo_name}")
+            else:
+                print(f"  Found {len(eligible_files)} eligible files")
+                # Create simple candidates: one per file for each smell type
+                for smell_type_dict in smell_types:
+                    smell_type = smell_type_dict["type"]
+                    candidates_data[smell_type] = []
+                    for file_info in eligible_files[:5]:  # Use top 5 files
+                        candidates_data[smell_type].append({
+                            "file": file_info["file"],
+                            "class_name": None,
+                            "method_name": None,
+                            "line_number": 1,
+                            "reason": f"Auto-generated from eligible file ({file_info['lines']} lines)"
+                        })
+                print(f"  Generated {len(candidates_data)} smell types with automatic candidates")
+        elif os.path.exists(candidates_path):
             try:
                 with open(candidates_path, "r", encoding="utf-8") as f:
                     candidates_data = json.load(f).get("candidates", {})
@@ -1464,23 +1550,45 @@ def main(args):
             if not candidates_data.get(s["type"])
         ]
         if missing_candidate_types:
-            print(f"  Missing candidates for {len(missing_candidate_types)} smell types, generating...")
-            generate_candidates(
-                repo_name=repo_name,
-                repo_spec=repo_spec,
-                smell_types=smell_types,
-                project_dir=project_dir,
-                output_dir=output_dir,
-                model=args.agent_model
-            )
-            # Reload after generation
-            if os.path.exists(candidates_path):
+            # For mock agent, create dummy candidates
+            if args.agent.lower() in ("mock", "test"):
+                print(f"  Missing candidates for {len(missing_candidate_types)} smell types, creating mock candidates...")
+                for smell_type in missing_candidate_types:
+                    # Create mock candidates with dummy file/class/method
+                    candidates_data[smell_type] = [
+                        {
+                            "file": "src/mock_file.py",
+                            "class": "MockClass",
+                            "method": "mock_method",
+                            "difficulty": "medium",
+                            "reason": "Mock candidate for testing"
+                        }
+                    ]
+                # Save mock candidates
                 try:
-                    with open(candidates_path, "r", encoding="utf-8") as f:
-                        candidates_data = json.load(f).get("candidates", {})
-                    print(f"  Loaded candidates from {candidates_path}")
-                except (json.JSONDecodeError, OSError):
-                    print(f"  Warning: failed to load candidates after generation")
+                    with open(candidates_path, "w", encoding="utf-8") as f:
+                        json.dump({"candidates": candidates_data}, f, indent=2)
+                    print(f"  Created mock candidates at {candidates_path}")
+                except Exception as e:
+                    print(f"  Warning: failed to save mock candidates: {e}")
+            else:
+                print(f"  Missing candidates for {len(missing_candidate_types)} smell types, generating...")
+                generate_candidates(
+                    repo_name=repo_name,
+                    repo_spec=repo_spec,
+                    smell_types=smell_types,
+                    project_dir=project_dir,
+                    output_dir=output_dir,
+                    model=args.agent_model
+                )
+                # Reload after generation
+                if os.path.exists(candidates_path):
+                    try:
+                        with open(candidates_path, "r", encoding="utf-8") as f:
+                            candidates_data = json.load(f).get("candidates", {})
+                        print(f"  Loaded candidates from {candidates_path}")
+                    except (json.JSONDecodeError, OSError):
+                        print(f"  Warning: failed to load candidates after generation")
         else:
             print(f"  Loaded candidates from {candidates_path}")
 
@@ -1534,6 +1642,7 @@ def main(args):
                     smell_description=smell_desc,
                     model=args.model,
                     base_url=args.base_url,
+                    agent=args.agent,
                 )
                 analysis_duration = time.time() - analysis_start
 
@@ -1791,11 +1900,13 @@ def main(args):
                 if len(all_attempts) > 1:
                     print(f"  Candidate attempts summary:")
                     for att in all_attempts:
-                        status = "✓" if att["success"] else "✗"
+                        status = "✓" if att.get("success", False) else "✗"
                         fix_count = att.get("total_fix_attempts", 0)
                         dur = att.get("total_duration_seconds", 0)
-                        print(f"    [{status}] Candidate {att['candidate_index']}: "
-                              f"{att['target_file']}::{att['target_location']} - "
+                        target_file = att.get("target_file", "unknown")
+                        target_location = att.get("target_location", "")
+                        print(f"    [{status}] Candidate {att.get('candidate_index', 0)}: "
+                              f"{target_file}::{target_location} - "
                               f"{dur:.1f}s ({fix_count} fixes)")
             else:
                 print(f"  Skipped: no valid result for {smell_type} ({difficulty}) after {candidate_attempt + 1} candidate(s)")
@@ -1827,6 +1938,8 @@ def parse_args() -> argparse.Namespace:
                         help="Base URL for Anthropic API (overrides ANTHROPIC_BASE_URL env var).")
     parser.add_argument("--test", action="store_true",
                         help="Test mode: only first smell type, difficulty=medium.")
+    parser.add_argument("--skip-candidates", action="store_true",
+                        help="Skip candidate generation - use automatic file selection instead.")
     return parser.parse_args()
 
 

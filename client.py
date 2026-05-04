@@ -1018,6 +1018,9 @@ class LLMFactory:
             if not model:
                 model = os.getenv("CLAUDE_CODE_MODEL")
             return ClaudeCodeClient(model=model, api_key=api_key, base_url=base_url)
+        elif client_type.lower() == "mock":
+            from mock_agent import MockAgentClient
+            return MockAgentClient(model=model)
         else:
             raise ValueError(f"Unsupported client type: {client_type}")
 

@@ -39,7 +39,14 @@ client = docker.from_env()
 
 BASE_IMAGE_TAG = "critical88/smellbench_base:latest"
 
-SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex")
+# Language-specific base image tags
+BASE_IMAGE_TAGS = {
+    "python": "smellbench_base_python:latest",
+    "java": "smellbench_base_java:latest",
+    "go": "smellbench_base_go:latest",
+}
+
+SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex", "mock", "test")
 
 # Environment variables each agent may need, forwarded into the container
 AGENT_ENV_KEYS = {
@@ -70,16 +77,37 @@ COMMON_ENV_KEYS = [
 # Docker helpers
 # ---------------------------------------------------------------------------
 
-def ensure_base_image() -> None:
-    """Build the base image if it does not exist."""
+def ensure_base_image(language: str = "python") -> str:
+    """Build the language-specific base image if it does not exist.
+
+    Args:
+        language: Programming language (python, java, go)
+
+    Returns:
+        The image tag for the base image
+    """
+    language = language.lower()
+    local_tag = BASE_IMAGE_TAGS.get(language, BASE_IMAGE_TAGS["python"])
+
     images = client.images.list()
-    local_tag = "smellbench_base:latest"
     if any(local_tag in tag for img in images for tag in img.tags):
         print(f"Base image '{local_tag}' already exists.")
-        return
-    print("Building base image ...")
-    image, _ = client.images.build(path=".", dockerfile="Dockerfile", tag=local_tag, rm=True)
+        return local_tag
+
+    # Select Dockerfile based on language
+    if language == "python":
+        dockerfile = "Dockerfile"
+    elif language == "java":
+        dockerfile = "Dockerfile.java"
+    elif language == "go":
+        dockerfile = "Dockerfile.go"
+    else:
+        raise ValueError(f"Unsupported language: {language}")
+
+    print(f"Building base image '{local_tag}' from {dockerfile} ...")
+    image, _ = client.images.build(path=".", dockerfile=dockerfile, tag=local_tag, rm=True)
     print(f"Built base image: {image.tags[0]}")
+    return local_tag
 
 
 def ensure_project_image(project_name: str) -> str:
@@ -93,21 +121,25 @@ def ensure_project_image(project_name: str) -> str:
     repo_info = repo_dict[project_name]
     repo_url = repo_info["url"]
     commit_id = repo_info["commit_id"]
-    conda_env_create = repo_info.get("conda_env_create", "")
-    env_name = repo_info.get("env_name", project_name)
-    build_cmd = repo_info.get("build_cmd", "pip install -e .")
+    language = repo_info.get("language", "python").lower()
 
-    if isinstance(conda_env_create, list):
-        conda_env_create = " && ".join(conda_env_create)
-    if isinstance(build_cmd, str):
-        build_cmd = [build_cmd]
-    build_cmd = " && ".join(f"conda run -n {env_name} {cmd}" for cmd in build_cmd)
+    # Get the appropriate base image for this language
+    base_image = BASE_IMAGE_TAGS.get(language, BASE_IMAGE_TAGS["python"])
 
-    image_dir = Path("docker_images") / project_name
-    os.makedirs(image_dir, exist_ok=True)
+    # Handle different project types (Python, Java, Go, etc.)
+    if language == "python":
+        conda_env_create = repo_info.get("conda_env_create", "")
+        env_name = repo_info.get("env_name", project_name)
+        build_cmd = repo_info.get("build_cmd", "pip install -e .")
 
-    dockerfile = f"""\
-FROM {BASE_IMAGE_TAG}
+        if isinstance(conda_env_create, list):
+            conda_env_create = " && ".join(conda_env_create)
+        if isinstance(build_cmd, str):
+            build_cmd = [build_cmd]
+        build_cmd = " && ".join(f"conda run -n {env_name} {cmd}" for cmd in build_cmd)
+
+        dockerfile = f"""\
+FROM {base_image}
 WORKDIR /workspace/project
 
 ARG REPO_URL={repo_url}
@@ -126,11 +158,68 @@ RUN git config --global user.name "smellbench"
 
 CMD ["/bin/bash"]
 """
+    elif language == "java":
+        build_cmd = repo_info.get("build_cmd", "mvn compile -DskipTests")
+
+        dockerfile = f"""\
+FROM {base_image}
+WORKDIR /workspace/project
+
+ARG REPO_URL={repo_url}
+ARG COMMIT_ID={commit_id}
+
+RUN git clone --recursive "$REPO_URL" {project_name} \\
+&& cd {project_name} \\
+&& git checkout "$COMMIT_ID"
+
+WORKDIR /workspace/project/{project_name}
+
+# Build the project
+RUN {build_cmd}
+
+RUN git config --global user.email "smellbench@example.com"
+RUN git config --global user.name "smellbench"
+
+CMD ["/bin/bash"]
+"""
+    elif language == "go":
+        build_cmd = repo_info.get("build_cmd", "go build ./...")
+
+        dockerfile = f"""\
+FROM {base_image}
+WORKDIR /workspace/project
+
+ARG REPO_URL={repo_url}
+ARG COMMIT_ID={commit_id}
+
+RUN git clone --recursive "$REPO_URL" {project_name} \\
+&& cd {project_name} \\
+&& git checkout "$COMMIT_ID"
+
+WORKDIR /workspace/project/{project_name}
+
+# Download dependencies
+RUN go mod download || true
+
+# Build the project
+RUN {build_cmd} || true
+
+RUN git config --global user.email "smellbench@example.com"
+RUN git config --global user.name "smellbench"
+
+CMD ["/bin/bash"]
+"""
+    else:
+        raise ValueError(f"Unsupported language: {language}")
+
+    image_dir = Path("docker_images") / project_name
+    os.makedirs(image_dir, exist_ok=True)
+
     with open(image_dir / "Dockerfile", "w") as f:
         f.write(dockerfile.strip() + "\n")
 
     with print_lock:
-        print(f"Building image for project: {project_name}")
+        print(f"Building image for project: {project_name} (language: {language})")
     image, _ = client.images.build(path=str(image_dir), tag=project_tag, rm=True)
     with print_lock:
         print(f"Built project image: {image.tags[0]}")
@@ -268,9 +357,21 @@ def main() -> None:
                         help="Skip Docker image build, assume images exist.")
     args = parser.parse_args()
 
-    # 1. Ensure base image
+    # 1. Ensure base images for all languages used by selected repos
     if not args.skip_build:
-        ensure_base_image()
+        # Collect all languages used by selected repos
+        languages_needed = set()
+        for name, spec in repo_dict.items():
+            if args.project_name and name != args.project_name:
+                continue
+            if not args.project_name and not spec.get("selected", False):
+                continue
+            language = spec.get("language", "python").lower()
+            languages_needed.add(language)
+
+        print(f"Building base images for languages: {', '.join(sorted(languages_needed))}")
+        for lang in sorted(languages_needed):
+            ensure_base_image(lang)
 
     # 2. Select repos
     projects = []

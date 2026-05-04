@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-Build a method-to-test mapping for Java projects using javalang AST analysis
-and JaCoCo coverage data.
+Build a method-to-test mapping for Java projects using javap to extract
+method signatures from compiled class files and JaCoCo coverage data.
 
-Per-test-class granularity: each test class is run separately and its JaCoCo
-exec file is parsed to determine which source methods are covered.
+This approach avoids parsing issues with complex Java source files by using
+the compiled bytecode directly.
 """
 from __future__ import annotations
 
@@ -20,13 +20,6 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
-
-try:
-    import javalang
-except ImportError as exc:
-    raise SystemExit(
-        "The javalang package is required. Install it with `pip install javalang`."
-    ) from exc
 
 from utils import pushd, get_spec
 
@@ -75,7 +68,164 @@ class JavaFileIndex:
 
 
 # ---------------------------------------------------------------------------
-# Java AST analysis using javalang
+# Java method extraction using javap (from compiled class files)
+# ---------------------------------------------------------------------------
+
+def extract_methods_from_class_file(
+    class_file: Path,
+    classes_root: Path,
+    src_root: Path,
+) -> Tuple[List[JavaMethodInfo], str, str]:
+    """
+    Extract method information from a compiled .class file using javap.
+
+    Args:
+        class_file: Path to the .class file
+        classes_root: Root directory of compiled classes (e.g., target/classes)
+        src_root: Root directory of source files (to find line numbers)
+
+    Returns:
+        (methods, package, simple_class_name)
+    """
+    methods = []
+
+    # Get the fully qualified class name from the file path
+    rel_path = class_file.relative_to(classes_root)
+    class_fqn = str(rel_path.with_suffix('')).replace(os.sep, '.')
+
+    # Extract package and class name
+    if '.' in class_fqn:
+        package = class_fqn.rsplit('.', 1)[0]
+        simple_class_name = class_fqn.rsplit('.', 1)[1]
+    else:
+        package = ''
+        simple_class_name = class_fqn
+
+    # Run javap to get method signatures
+    # Use -private to show all members (public, protected, package, private)
+    try:
+        result = subprocess.run(
+            ['javap', '-private', '-s', str(class_file)],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            return methods, package, simple_class_name
+
+        # Parse javap output
+        # Each method looks like:
+        #   public static java.lang.String method_name(param_type);
+        #     descriptor: (Lparam;)Lreturn;
+
+        lines = result.stdout.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Look for method declarations (not fields, not class declarations)
+            # Methods have ( in them and don't have '=' (which would be a field)
+            if '(' in line and '=' not in line:
+                # Skip if it's a class/interface/enum declaration line
+                if any(keyword in line.split('(')[0] for keyword in [' class ', ' interface ', ' enum ']):
+                    i += 1
+                    continue
+
+                # Extract method name - it's the word before (
+                try:
+                    before_paren = line.split('(')[0]
+                    parts = before_paren.split()
+                    if len(parts) >= 1:
+                        # The method name is the last word before (
+                        method_name = parts[-1]
+
+                        # Skip special cases
+                        if method_name in ['class', 'interface', 'enum', 'descriptor:']:
+                            i += 1
+                            continue
+
+                        # Check next line for descriptor
+                        descriptor = ''
+                        if i + 1 < len(lines):
+                            next_line = lines[i + 1].strip()
+                            if next_line.startswith('descriptor:'):
+                                descriptor = next_line.split(':', 1)[1].strip()
+
+                        # Create JavaMethodInfo
+                        method_key = f"{package}.{simple_class_name}.{method_name}"
+                        methods.append(JavaMethodInfo(
+                            package=package,
+                            qualname=f"{simple_class_name}.{method_name}",
+                            filepath=Path(''),  # Will be filled later if needed
+                            start=0,
+                            end=0,
+                            return_type='',
+                            parameter_types=[],
+                            modifiers=frozenset()
+                        ))
+
+                except Exception as e:
+                    # Skip this line if parsing fails
+                    pass
+
+            i += 1
+
+    except Exception as e:
+        print(f"Warning: Failed to extract methods from {class_file}: {e}", file=sys.stderr)
+
+    return methods, package, simple_class_name
+
+
+def build_java_function_index_from_classes(
+    classes_root: Path,
+    src_root: Path,
+    package_prefix: str,
+) -> Tuple[Dict[Path, JavaFileIndex], Dict[str, JavaMethodInfo], Dict[str, JavaClassInfo]]:
+    """
+    Build function index from compiled class files using javap.
+
+    Args:
+        classes_root: Root directory of compiled classes (e.g., target/classes)
+        src_root: Root directory of source files
+        package_prefix: Package prefix to filter (e.g., "org.apache.commons.io")
+
+    Returns:
+        (file_index, method_lookup, class_lookup)
+    """
+    file_index: Dict[Path, JavaFileIndex] = {}
+    method_lookup: Dict[str, JavaMethodInfo] = {}
+    class_lookup: Dict[str, JavaClassInfo] = {}
+
+    # Find all .class files
+    class_files = list(classes_root.rglob('*.class'))
+    print(f"Found {len(class_files)} class files in {classes_root}")
+
+    for class_file in class_files:
+        # Get fully qualified class name
+        rel_path = class_file.relative_to(classes_root)
+        class_fqn = str(rel_path.with_suffix('')).replace(os.sep, '.')
+
+        # Filter by package prefix
+        if package_prefix and not class_fqn.startswith(package_prefix):
+            continue
+
+        # Extract methods using javap
+        methods, _, _ = extract_methods_from_class_file(
+            class_file, classes_root, src_root
+        )
+
+        # Add methods to method_lookup
+        for method in methods:
+            method_lookup[method.key] = method
+
+    print(f"Extracted {len(method_lookup)} methods from {len(class_files)} class files")
+
+    return file_index, method_lookup, class_lookup
+
+
+# ---------------------------------------------------------------------------
+# Java AST analysis using javalang (DEPRECATED - keeping for backwards compatibility)
 # ---------------------------------------------------------------------------
 
 def _compute_end_line(source_lines: List[str], start_line: int) -> int:
@@ -626,6 +776,78 @@ def _parse_jacoco_for_covered_methods(xml_path: Path) -> Set[str]:
     return covered
 
 
+def build_method_lookup_from_jacoco(
+    jacoco_xml: Path,
+    package_prefix: str,
+) -> Dict[str, JavaMethodInfo]:
+    """
+    Build method_lookup directly from JaCoCo coverage report.
+    Much faster than scanning all class files with javap.
+
+    Args:
+        jacoco_xml: Path to JaCoCo XML report
+        package_prefix: Package prefix to filter
+
+    Returns:
+        method_lookup dictionary
+    """
+    method_lookup: Dict[str, JavaMethodInfo] = {}
+
+    try:
+        tree = ET.parse(str(jacoco_xml))
+        root = tree.getroot()
+
+        for package in root.iter("package"):
+            pkg_name = package.get("name", "").replace("/", ".")
+
+            # Filter by package prefix
+            if package_prefix and not pkg_name.startswith(package_prefix):
+                continue
+
+            for cls in package.iter("class"):
+                class_name = cls.get("name", "").replace("/", ".")
+
+                # Extract simple class name (last part)
+                simple_class = class_name.split('.')[-1]
+
+                for method in cls.iter("method"):
+                    method_name = method.get("name", "")
+                    method_desc = method.get("desc", "")
+
+                    # Check if method has any coverage
+                    has_coverage = False
+                    for counter in method.iter("counter"):
+                        if counter.get("type") == "INSTRUCTION":
+                            covered_count = int(counter.get("covered", "0"))
+                            if covered_count > 0:
+                                has_coverage = True
+                                break
+
+                    if has_coverage:
+                        # Create method key: package.Class.method
+                        method_key = f"{class_name}.{method_name}"
+
+                        # Create JavaMethodInfo
+                        method_info = JavaMethodInfo(
+                            package=pkg_name,
+                            qualname=f"{simple_class}.{method_name}",
+                            filepath=Path(''),
+                            start=0,
+                            end=0,
+                            return_type='',
+                            parameter_types=[],
+                            modifiers=frozenset()
+                        )
+                        method_lookup[method_key] = method_info
+
+    except Exception as e:
+        print(f"Error building method lookup from JaCoCo: {e}")
+        import traceback
+        traceback.print_exc()
+
+    return method_lookup
+
+
 def _is_method_in_covered_set(method_key: str, covered_methods: Set[str]) -> bool:
     """Check if a method from our index appears in covered methods."""
     # method_key format: "package.Class.method(args)returnType"
@@ -828,61 +1050,72 @@ def generate_java_function_mapping(
         print(f"Output file {output_json} already exists.")
         return 0
 
-    # Step 1: Skip git reset (causes sandbox issues)
-    print(f"Skipping git reset to {commit_id[:12]} (assuming repo is at correct commit)...")
+    # Step 1: Ensure repo is at correct commit
+    if commit_id:
+        print(f"Ensuring repo is at commit {commit_id[:12]}...")
+        try:
+            # Check current commit
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(project_root),
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            current_commit = result.stdout.strip()
+
+            if current_commit != commit_id:
+                print(f"Warning: Current commit {current_commit[:12]} != expected {commit_id[:12]}")
+                print(f"Running git reset --hard {commit_id}...")
+                subprocess.run(
+                    ["git", "reset", "--hard", commit_id],
+                    cwd=str(project_root),
+                    check=True,
+                    timeout=30
+                )
+                print(f"✓ Reset to {commit_id[:12]}")
+            else:
+                print(f"✓ Already at correct commit {commit_id[:12]}")
+
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: git operations failed: {e}")
+            print("Continuing anyway (assuming repo is at correct state)...")
+        except Exception as e:
+            print(f"Warning: Unexpected error during git check: {e}")
+            print("Continuing anyway...")
 
     # Step 2: Build project (compile only, skip tests)
     print("Compiling project...")
 
-    # For multi-module Maven projects, compile only the specific module and its dependencies
-    if maven_module:
-        print(f"Multi-module project detected, compiling module: {maven_module}")
-        try:
-            # Use -pl to select module, -am to also build dependencies, -amd to skip dependent modules
-            subprocess.run(
-                ["mvn", "clean", "test-compile", "-DskipTests", "-pl", maven_module, "-am", "-q"],
-                cwd=str(project_root),
-                check=True,
-                timeout=600
-            )
-            print(f"Successfully compiled {maven_module}")
-        except subprocess.CalledProcessError as e:
-            print(f"Warning: mvn test-compile failed with code {e.returncode}")
-            # Continue anyway - try the project-specific build command
+    # Prepare clean environment without JAVA_TOOL_OPTIONS to avoid JaCoCo agent conflicts
+    clean_env = os.environ.copy()
+    clean_env["JAVA_TOOL_OPTIONS"] = ""
 
     # Run the project-specific build command (if any)
-    build_cmd = repo_spec.get("build_cmd", "mvn compile -DskipTests")
+    build_cmd = repo_spec.get("build_cmd", "mvn compile")
     if isinstance(build_cmd, str):
         build_cmd = [build_cmd]
     for cmd in build_cmd:
         try:
-            subprocess.run(cmd.split(), cwd=str(project_root), check=True)
+            subprocess.run(cmd.split(), cwd=str(project_root), env=clean_env, check=True)
         except subprocess.CalledProcessError as e:
             print(f"Warning: build command '{cmd}' failed with code {e.returncode}")
             # If we already compiled with test-compile above, this might be redundant
             if not maven_module:
                 raise
 
-    # Step 3: AST analysis
-    print(f"Analyzing Java source in {src_root}...")
-    file_index, method_lookup, class_lookup = build_java_function_index(
-        src_root, package_prefix
-    )
-    print(
-        f"Found {len(method_lookup)} methods across "
-        f"{len(file_index)} files, {len(class_lookup)} classes"
-    )
-
-    # Step 4: Run ALL tests once with JaCoCo (simplified approach)
+    # Step 3: Run tests with JaCoCo to generate coverage data
     print("Discovering tests...")
     test_classes = _discover_test_classes(test_root)
     print(f"Found {len(test_classes)} test classes")
 
+    # Determine which tests to run based on max_tests parameter
+    tests_to_run = test_classes
     if max_tests is not None and max_tests > 0:
-        test_classes = test_classes[:max_tests]
-        print(f"Limiting to first {max_tests} tests")
-
-    print(f"Running {len(test_classes)} tests with coverage...")
+        tests_to_run = test_classes[:max_tests]
+        print(f"Limiting to {len(tests_to_run)} test classes (max_tests={max_tests})")
+    else:
+        print(f"Running all {len(test_classes)} test classes")
 
     # For multi-module projects, use the module's target directory
     if maven_module:
@@ -899,41 +1132,86 @@ def generate_java_function_mapping(
         exec_file.unlink()
         print(f"Removed old coverage file")
 
-    # Set JAVA_TOOL_OPTIONS for JaCoCo
-    jacoco_agent = Path.home() / ".m2/repository/org/jacoco/org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar"
+    # Prepare clean environment for test execution
     env = os.environ.copy()
-    # Use append=true to accumulate coverage from all test classes
-    env["JAVA_TOOL_OPTIONS"] = f"-javaagent:{jacoco_agent}=destfile={exec_file},append=true"
 
-    # Build test pattern for specific tests
-    if test_classes:
-        test_pattern = ",".join([tc.rsplit(".", 1)[-1] for tc in test_classes])
+    # Debug: show current JAVA_TOOL_OPTIONS
+    if "JAVA_TOOL_OPTIONS" in env:
+        print(f"[DEBUG] Found existing JAVA_TOOL_OPTIONS: {env['JAVA_TOOL_OPTIONS']}")
+        del env["JAVA_TOOL_OPTIONS"]
+        print(f"[DEBUG] Deleted JAVA_TOOL_OPTIONS from environment")
+    else:
+        print(f"[DEBUG] No existing JAVA_TOOL_OPTIONS in environment")
+
+    # Build Maven test command based on whether project has JaCoCo in pom.xml
+    jacoco_in_pom = repo_spec.get("jacoco_in_pom", False)
+
+    if jacoco_in_pom:
+        # Project has JaCoCo configured in pom.xml, just run mvn test
+        print("Project has JaCoCo configured in pom.xml")
+        # Keep JAVA_TOOL_OPTIONS cleared to avoid conflicts
         cmd = [
             "mvn", "test",
-            f"-Dtest={test_pattern}",
-            "-DfailIfNoTests=false",
-            "-pl", maven_module if maven_module else "."
+            f"-Djacoco.destFile={exec_file}",
         ]
     else:
+        # Project doesn't have JaCoCo - use JAVA_TOOL_OPTIONS to load agent
+        print("Project needs JaCoCo - setting JAVA_TOOL_OPTIONS")
+        jacoco_agent = f"-javaagent:{Path.home()}/.m2/repository/org/jacoco/org.jacoco.agent/0.8.12/org.jacoco.agent-0.8.12-runtime.jar=destfile={exec_file}"
+        env["JAVA_TOOL_OPTIONS"] = jacoco_agent
+        print(f"[DEBUG] Set JAVA_TOOL_OPTIONS to: {env['JAVA_TOOL_OPTIONS']}")
         cmd = [
             "mvn", "test",
-            "-pl", maven_module if maven_module else "."
         ]
 
+    # Add -Dtest parameter only when limiting tests
+    if max_tests is not None and max_tests > 0 and tests_to_run:
+        test_pattern = ",".join(tests_to_run)
+        cmd.append(f"-Dtest={test_pattern}")
+        print(f"Running with test pattern (first 3): {','.join(tests_to_run[:3])}...")
+
+    cmd.extend(["-pl", maven_module if maven_module else "."])
+
+    # Run tests with visible output
+    print(f"\nExecuting: {' '.join(cmd)}")
+    print(f"Expected coverage file: {exec_file}\n")
     result = subprocess.run(
         cmd,
         cwd=str(project_root),
         env=env,
-        capture_output=True,
-        text=True,
         timeout=600,
     )
 
-    if not exec_file.exists():
-        print(f"ERROR: Coverage file not generated: {exec_file}")
-        return 1
+    if result.returncode != 0:
+        print(f"\nWarning: Maven test returned code {result.returncode}")
 
-    print(f"Coverage file generated: {exec_file.stat().st_size} bytes")
+    # Check if coverage file was created
+    print(f"\nChecking for coverage file at: {exec_file}")
+    print(f"  File exists: {exec_file.exists()}")
+
+    if exec_file.exists() and exec_file.stat().st_size > 0:
+        print(f"  File size: {exec_file.stat().st_size} bytes")
+    else:
+        if exec_file.exists():
+            print(f"  File exists but is empty (0 bytes)")
+
+        # Look for any .exec files in target directory (might be named differently)
+        target_dir = exec_file.parent
+        print(f"  Searching for alternative .exec files in {target_dir}...")
+        import glob
+        exec_files = glob.glob(str(target_dir / "*.exec"))
+        exec_files = [f for f in exec_files if Path(f).stat().st_size > 0]  # Only non-empty files
+
+        if exec_files:
+            print(f"  Found alternative coverage files: {exec_files}")
+            # Use the most recent non-empty .exec file
+            exec_file = Path(max(exec_files, key=lambda f: Path(f).stat().st_mtime))
+            print(f"  Using: {exec_file} (size: {exec_file.stat().st_size} bytes)")
+        else:
+            print(f"\nERROR: Coverage file not generated: {exec_file}")
+            return 1
+
+    print(f"✓ Coverage file generated: {exec_file.stat().st_size} bytes")
 
     # Step 5: Generate coverage report
     print("Generating coverage report...")
@@ -960,22 +1238,24 @@ def generate_java_function_mapping(
 
     print(f"Report generated: {jacoco_xml}")
 
-    # Step 6: Parse coverage - extract covered methods
-    print("Parsing coverage...")
-    covered_methods = _parse_jacoco_for_covered_methods(jacoco_xml)
-    print(f"Found {len(covered_methods)} covered methods")
+    # Step 6: Extract methods directly from JaCoCo coverage report
+    print("Extracting methods from JaCoCo coverage...")
+    method_lookup = build_method_lookup_from_jacoco(jacoco_xml, package_prefix)
+    print(f"Found {len(method_lookup)} methods with coverage")
 
-    # Step 7: Build simplified mapping
+    # Step 7: Build mapping
     print("Building mapping...")
+    file_index: Dict[Path, JavaFileIndex] = {}
+    class_lookup: Dict[str, JavaClassInfo] = {}
     graph = JavaCoverageGraph(src_root, file_index, method_lookup, class_lookup)
     test_class_names = [tc.rsplit(".", 1)[-1] for tc in test_classes]
 
     # All covered methods map to all tests (simplified approach)
     for method_key in method_lookup.keys():
-        if _is_method_in_covered_set(method_key, covered_methods):
-            # Add all test classes for this method
-            for test_name in test_class_names:
-                graph.method_to_tests[method_key].add(test_name)
+        # All methods in method_lookup already have coverage (from JaCoCo)
+        for test_name in test_class_names:
+            graph.method_to_tests[method_key].add(test_name)
+
 
     # Step 8: Export
     meta = {
