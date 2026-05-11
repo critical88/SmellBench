@@ -37,13 +37,11 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 client = docker.from_env()
 
-BASE_IMAGE_TAG = "critical88/smellbench_base:latest"
-
 # Language-specific base image tags
 BASE_IMAGE_TAGS = {
-    "python": "smellbench_base_python:latest",
-    "java": "smellbench_base_java:latest",
-    "go": "smellbench_base_go:latest",
+    "python": "critical88/smellbench_base_python:latest",
+    "java": "critical88/smellbench_base_java:latest",
+    "go": "critical88/smellbench_base_go:latest",
 }
 
 SUPPORTED_AGENTS = ("claude_code", "qwen_code", "openhands", "codex", "mock", "test")
@@ -217,7 +215,6 @@ CMD ["/bin/bash"]
 
     with open(image_dir / "Dockerfile", "w") as f:
         f.write(dockerfile.strip() + "\n")
-
     with print_lock:
         print(f"Building image for project: {project_name} (language: {language})")
     image, _ = client.images.build(path=str(image_dir), tag=project_tag, rm=True)
