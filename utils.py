@@ -248,6 +248,7 @@ def install_repo(spec, project_path="../project"):
         if language == "go":
             env["GOCACHE"] = os.path.abspath(os.path.join(cwd, ".gocache"))
             env["GOMODCACHE"] = os.path.abspath(os.path.join(cwd, ".gomodcache"))
+            # Download Go modules - no timeout to allow large dependencies
             subprocess.run(["go", "mod", "download"], cwd=cwd, capture_output=True, text=True, env=env)
         for cmd in build_cmd:
             cmd_list = cmd if isinstance(cmd, list) else cmd.split(" ")

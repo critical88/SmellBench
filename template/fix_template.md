@@ -44,10 +44,14 @@ Do NOT run any tests yourself — testing is handled externally.
 After making your fixes, output the same JSON format as before:
 ```json
 {
+  "smell_type": "Type name",
   "hint_targeted": "Natural language task: tell agent to find and refactor the smell. Include smell type + file + class/method. No fixed format.",
   "hint_guided": "Natural language task: tell agent to find and refactor the smell. Include ONLY smell type + the single main file. Do NOT reveal multiple files, class names, or method names. No fixed format.",
   "hint_open": "Natural language task: tell agent to find and refactor code smells in a given file. Include ONLY the file path(s). Do NOT reveal the smell type, class names, or method names. No fixed format.",
-  "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
-  "test_functions": [["<absolute_file_path>", "<class name or null>", "<function_name>"]]
+  "smell_function": ["absolute/path/to/file", "ClassName", "methodName"],
+  "test_functions": [
+    ["absolute/path/to/file", "ClassName", "methodName"],
+    ["absolute/path/to/other", "ClassName", "methodName"]
+  ]
 }
 ```

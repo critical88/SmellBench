@@ -1051,7 +1051,15 @@ def generate_function_mapping(project_name:str, project_path="../project", outpu
     exit_code = 0
     with pushd(project_root):
         subprocess.run(['git', 'reset', '--hard', commit_id], cwd=".", check=True)
-        subprocess.run(['git', 'clean', '-fd'], cwd=".", check=True)
+
+        # Clean untracked files - exclude Go cache directories if this is a Go project
+        language = repo_spec.get("language", "python").lower()
+        if language == "go":
+            clean_cmd = ['git', 'clean', '-fd', '-e', '.gocache', '-e', '.gomodcache']
+        else:
+            clean_cmd = ['git', 'clean', '-fd']
+        subprocess.run(clean_cmd, cwd=".", check=True)
+
         cov.start()
         print(f"start pytesting")
         try:

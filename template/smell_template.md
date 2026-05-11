@@ -57,7 +57,7 @@ You MUST inject the smell starting from the following candidate:
 After generating the modified codebase, you MUST append a JSON object at the very end of your response.
 
 Requirements:
-- The JSON must be valid
+- The JSON must be valid and parseable
 - Do NOT include any extra text after the JSON
 - Do NOT wrap JSON inside explanations
 - Place JSON AFTER all code
@@ -70,29 +70,44 @@ Each hint should feel UNIQUE and NATURAL. Use different verbs (refactor/clean up
 Format:
 ```json
 {
+  "smell_type": "Type name",
   "hint_targeted": "A concise, professional task description (1-2 sentences) that specifies the smell type name (e.g., 'dead code', 'god class') and exact location (file, class, method). Use VARIED phrasing. Can mention smell type NAME, but MUST NOT describe: (1) WHY the smell exists or what caused it, (2) HOW the smell manifests (specific pattern/structure), (3) implementation details (how code works internally), (4) mechanisms (technical approach/pattern), (5) architecture (system design/relationships), (6) what the code does (functionality/purpose), (7) multiple affected files.",
   "hint_guided": "A concise, professional task description (1-2 sentences) that specifies the smell type name (e.g., 'dead code', 'god class') and the single main file. Use VARIED phrasing. Can mention smell type NAME, but MUST NOT describe: (1) WHY the smell exists or what caused it, (2) HOW the smell manifests (specific pattern/structure), (3) other files beyond the main file, (4) class/method names (agent discovers these), (5) line numbers, (6) implementation details.",
   "hint_open": "A concise, professional task description (1-2 sentences) asking to refactor the specified file(s). MUST be COMPLETELY GENERIC - only file path + generic refactoring request. Should clearly indicate it's a refactoring task, not a vague review or check. Generic quality terms are ALLOWED (maintainability, readability, code quality, better practices, cleaner code). MUST NOT: (1) hint at SPECIFIC problem type (design issues, responsibilities, encapsulation, coupling, cohesion, complexity, duplication, dependencies, abstraction, inheritance, modularity, separation of concerns), (2) reveal smell type (dead code, god class, feature envy, etc.), (3) mention class/method/function names, (4) mention line numbers, (5) describe what specific issues exist. Key principle: reject hints that reveal WHAT the problem is, not generic quality improvement language.",
-  "smell_function": ["<absolute_file_path>", "<class name or null>", "<function name or null>"],
+  "smell_function": ["absolute/path/to/file.java", "ClassName", "methodName"],
+  "main_function": [
+    ["absolute/path/to/file.java", "ClassName", "methodName"],
+    ["absolute/path/to/other.java", "ClassName", "methodName"]
+  ],
   "test_functions": [
-    ["<absolute_file_path>", "<class name or null>", "<function_name>"],
-    ["<absolute_file_path>", "<class name or null>", "<function_name>"]
-  ]
+    ["absolute/path/to/file.java", "ClassName", "methodName"],
+    ["absolute/path/to/other.java", "ClassName", "methodName"]
+  ],
+  "smell_content": "Full git diff patch content here"
 }
 ```
 
 ### smell_function rules (CRITICAL):
 - This identifies the single **most central location** where the smell is centered.
-- For class-level smells (e.g., god_classes, interface_segregation), use `[absolute_file_path, class_name, null]` to indicate the class itself.
-- For function-level smells, use `[absolute_file_path, class_name_or_null, function_name]`.
-- Format: `[absolute_file_path, class_name_or_null, function_name_or_null]` (NOT a nested array).
+- Format: `["absolute/path/to/file", "ClassName", "methodName"]`
+- For class-level smells (e.g., god_classes, interface_segregation), use empty string `""` for method_name to indicate the class itself.
+- For function-level smells, specify both class_name (if applicable) and method_name.
+
+### main_function rules:
+- Optional field that lists the primary functions modified by the smell injection
+- Each entry is a list: `["file_path", "class_name", "method_name"]`
 
 ### test_functions rules (CRITICAL):
 - **IMPORTANT**: List **SOURCE CODE functions/methods that were MODIFIED** by the smell injection, NOT test case functions.
-- These should be functions in the **production code** , NOT in test files .
+- These should be functions in the **production code**, NOT in test files.
+- Each entry is a list: `["file_path", "class_name", "method_name"]`
 - Each entry MUST be at **method/function level** — never a class or module.
 - For class-level smells (e.g., god_classes, interface_segregation), list the specific **methods in the source code that were modified** or whose implementations are affected by the injection.
 - The call chain of each listed function should **cover the injected changes** — i.e., exercising these functions should trigger the smell-related code paths.
 - If the injection modifies multiple methods across files, list **all of them** from the source code — the more coverage the better.
-- Format: each entry is `[absolute_file_path, class_name_or_null, function_name]` where file_path points to SOURCE CODE files.
-- Example: `["src/jinja2/runtime.py", null, "new_context"]` NOT `["tests/test_api.py", "TestClass", "test_something"]`
+- Example: `["src/jinja2/runtime.py", "", "new_context"]` NOT test file functions
+
+### smell_content rules:
+- This field contains the complete git diff patch showing all changes made to inject the smell
+- Must be valid unified diff format that can be applied with `git apply`
+- Should capture all modifications across all affected files

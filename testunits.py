@@ -28,6 +28,9 @@ def reset_repository(repo_path, commit_hash=None, exclude_go_cache=True):
             # Exclude Go cache directories to speed up subsequent builds
             clean_cmd.extend(['-e', '.gocache', '-e', '.gomodcache'])
 
+        # Debug: print the actual command being run
+        print(f"[DEBUG] Running git clean in {repo_path}: {' '.join(clean_cmd)}")
+
         subprocess.run(clean_cmd, cwd=repo_path, check=True)
         return True
     except subprocess.CalledProcessError:

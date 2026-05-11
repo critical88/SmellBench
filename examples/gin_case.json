@@ -1,0 +1,26 @@
+{
+  "instance_id": "gin-feature_envy-mock",
+  "type": "feature_envy",
+  "difficulty": "medium",
+  "main_function": [
+    [
+      "context.go",
+      "Context",
+      "ClientIP"
+    ],
+    [
+      "gin.go",
+      "Engine",
+      "resolveClientAddr"
+    ]
+  ],
+  "testsuites": [
+    "TestBincTime",
+    "TestContextFormFile",
+    "TestContextGetRawData"
+  ],
+  "smell_content": "diff --git a/context.go b/context.go\nindex 420ff16..89853e5 100644\n--- a/context.go\n+++ b/context.go\n@@ -7,7 +7,6 @@ package gin\n import (\n \t\"errors\"\n \t\"io\"\n-\t\"log\"\n \t\"math\"\n \t\"mime/multipart\"\n \t\"net\"\n@@ -769,40 +768,8 @@ func (c *Context) ShouldBindBodyWith(obj any, bb binding.BindingBody) (err error\n // If the headers are not syntactically valid OR the remote IP does not correspond to a trusted proxy,\n // the remote IP (coming from Request.RemoteAddr) is returned.\n func (c *Context) ClientIP() string {\n-\t// Check if we're running on a trusted platform, continue running backwards if error\n-\tif c.engine.TrustedPlatform != \"\" {\n-\t\t// Developers can define their own header of Trusted Platform or use predefined constants\n-\t\tif addr := c.requestHeader(c.engine.TrustedPlatform); addr != \"\" {\n-\t\t\treturn addr\n-\t\t}\n-\t}\n-\n-\t// Legacy \"AppEngine\" flag\n-\tif c.engine.AppEngine {\n-\t\tlog.Println(`The AppEngine flag is going to be deprecated. Please check issues #2723 and #2739 and use 'TrustedPlatform: gin.PlatformGoogleAppEngine' instead.`)\n-\t\tif addr := c.requestHeader(\"X-Appengine-Remote-Addr\"); addr != \"\" {\n-\t\t\t\treturn addr\n-\t\t}\n-\t}\n-\n-\t// It also checks if the remoteIP is a trusted proxy or not.\n-\t// In order to perform this validation, it will see if the IP is contained within at least one of the CIDR blocks\n-\t// defined by Engine.SetTrustedProxies()\n \tremoteIP := net.ParseIP(c.RemoteIP())\n-\tif remoteIP == nil {\n-\t\treturn \"\"\n-\t}\n-\ttrusted := c.engine.isTrustedProxy(remoteIP)\n-\n-\tif trusted && c.engine.ForwardedByClientIP && c.engine.RemoteIPHeaders != nil {\n-\t\tfor _, headerName := range c.engine.RemoteIPHeaders {\n-\t\t\tip, valid := c.engine.validateHeader(c.requestHeader(headerName))\n-\t\t\tif valid {\n-\t\t\t\treturn ip\n-\t\t\t}\n-\t\t}\n-\t}\n-\treturn remoteIP.String()\n+\treturn c.engine.resolveClientAddr(c.Request, remoteIP)\n }\n \n // RemoteIP parses the IP from Request.RemoteAddr, normalizes and returns the IP (without the port).\ndiff --git a/gin.go b/gin.go\nindex ed8b6da..473a3b1 100644\n--- a/gin.go\n+++ b/gin.go\n@@ -7,6 +7,7 @@ package gin\n import (\n \t\"fmt\"\n \t\"html/template\"\n+\t\"log\"\n \t\"net\"\n \t\"net/http\"\n \t\"os\"\n@@ -459,9 +460,9 @@ func (engine *Engine) validateHeader(header string) (clientIP string, valid bool\n \tif header == \"\" {\n \t\treturn \"\", false\n \t}\n-\titems := strings.Split(header, \",\")\n-\tfor i := len(items) - 1; i >= 0; i-- {\n-\t\tipStr := strings.TrimSpace(items[i])\n+\theaderParts := strings.Split(header, \",\")\n+\tfor i := len(headerParts) - 1; i >= 0; i-- {\n+\t\tipStr := strings.TrimSpace(headerParts[i])\n \t\tip := net.ParseIP(ipStr)\n \t\tif ip == nil {\n \t\t\tbreak\n@@ -476,6 +477,41 @@ func (engine *Engine) validateHeader(header string) (clientIP string, valid bool\n \treturn \"\", false\n }\n \n+// resolveClientAddr resolves the real client IP address by inspecting request headers\n+// according to the engine's trusted proxy and platform configuration.\n+func (engine *Engine) resolveClientAddr(req *http.Request, remoteIP net.IP) string {\n+\t// Check if we're running on a trusted platform, continue running backwards if error\n+\tif engine.TrustedPlatform != \"\" {\n+\t\tif addr := req.Header.Get(engine.TrustedPlatform); addr != \"\" {\n+\t\t\treturn addr\n+\t\t}\n+\t}\n+\n+\t// Legacy \"AppEngine\" flag\n+\tif engine.AppEngine {\n+\t\tlog.Println(`The AppEngine flag is going to be deprecated. Please check issues #2723 and #2739 and use 'TrustedPlatform: gin.PlatformGoogleAppEngine' instead.`)\n+\t\tif addr := req.Header.Get(PlatformGoogleAppEngine); addr != \"\" {\n+\t\t\treturn addr\n+\t\t}\n+\t}\n+\n+\tif remoteIP == nil {\n+\t\treturn \"\"\n+\t}\n+\n+\ttrusted := engine.isTrustedProxy(remoteIP)\n+\n+\tif trusted && engine.ForwardedByClientIP && engine.RemoteIPHeaders != nil {\n+\t\tfor _, headerName := range engine.RemoteIPHeaders {\n+\t\t\tip, valid := engine.validateHeader(req.Header.Get(headerName))\n+\t\t\tif valid {\n+\t\t\t\treturn ip\n+\t\t\t}\n+\t\t}\n+\t}\n+\treturn remoteIP.String()\n+}\n+\n // parseIP parse a string representation of an IP and returns a net.IP with the\n // minimum byte representation or nil if input is invalid.\n func parseIP(ip string) net.IP {\n",
+  "hash": "mock_gin_feature_envy",
+  "commit_hash": "4ea0e6426a54b331745bab71d1e9829d343f3e59",
+  "project_name": "gin"
+}

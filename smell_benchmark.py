@@ -22,7 +22,7 @@ import uuid
 from testunits import reset_repository, run_project_tests
 from utils import _run_git_command, get_spec, hashcode, prepare_to_run
 from find_candidates import process_repo as generate_candidates
-from claude_cli import call_llm, extract_json_from_response
+from claude_cli import call_llm, extract_json_from_response, extract_xml_from_response
 from client import LLMFactory
 from ast_analyzers import ensure_mapping_exists
 from diff_analyzer import extract_modified_functions, print_modified_functions
@@ -971,15 +971,18 @@ def process_one_smell(
             "_current_attempt_stats": current_attempt_stats
         }
 
-    # Parse JSON from response
+    # Parse JSON from response (with XML fallback for backward compatibility)
     parsed = extract_json_from_response(response_text)
     if parsed is None:
-        print(f"  Failed to parse JSON from agent response for {repo_name} / {smell_type}")
+        parsed = extract_xml_from_response(response_text)
+
+    if parsed is None:
+        print(f"  Failed to parse JSON/XML from agent response for {repo_name} / {smell_type}")
         reset_repository(repo_path, commit_id)
         # Return failure info instead of None
         return {
             "_is_failure": True,
-            "_failure_reason": "json_parse_failed",
+            "_failure_reason": "parse_failed",
             "_current_attempt_stats": current_attempt_stats
         }
 
@@ -1218,8 +1221,11 @@ def process_one_smell(
         smell_content = new_smell_content
         gt_content = new_gt_content
 
-        # Re-parse JSON (agent may have updated it)
+        # Re-parse JSON/XML (agent may have updated it)
         new_parsed = extract_json_from_response(response_text)
+        if new_parsed is None:
+            new_parsed = extract_xml_from_response(response_text)
+
         if new_parsed:
             parsed = new_parsed
             hint_targeted = parsed.get("hint_targeted", hint_targeted)

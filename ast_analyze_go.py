@@ -142,11 +142,11 @@ def run_tests_with_coverage(project_root: Path, coverage_file: Path, test_cmd: s
     env = _go_env(project_root)
 
     # Download dependencies first (silent)
+    # Note: No timeout set - let it take as long as needed for large dependencies
     subprocess.run(
         ["go", "mod", "download"],
         cwd=str(project_root),
         env=env,
-        timeout=300,
         check=False,
     )
 

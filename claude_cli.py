@@ -8,6 +8,7 @@ Extracted to avoid circular imports between smell_benchmark and find_candidates.
 import json
 import os
 import re
+import xml.etree.ElementTree as ET
 import shlex
 import shutil
 import subprocess
@@ -178,18 +179,125 @@ def call_claude_cli(
     return result_text, trajectory, usage
 
 
-def extract_json_from_response(response_text: str) -> Optional[Dict]:
-    """Extract the JSON object from the agent's response text.
+def extract_xml_from_response(response_text: str) -> Optional[Dict]:
+    """Extract the XML object from the agent's response text and convert to dict.
 
     Tries several strategies:
-    1. Find JSON in ```json ... ``` fenced block
-    2. Find the last { ... } block in the text
+    1. Find XML in ```xml ... ``` fenced block
+    2. Find <smell_injection> ... </smell_injection> tags
+    3. Find any <root> ... </root> block
+
+    Returns a dictionary matching the expected JSON structure.
     """
     if not response_text:
         return None
 
     # Strategy 1: fenced code block
-    pattern = r"```json\s*(\{.*?\})\s*```"
+    pattern = r"```xml\s*(<.*?>.*?</.*?>)\s*```"
+    matches = re.findall(pattern, response_text, re.DOTALL)
+    if matches:
+        try:
+            return _parse_xml_to_dict(matches[-1])
+        except Exception:
+            pass
+
+    # Strategy 2: Find <smell_injection> block
+    pattern = r"<smell_injection>(.*?)</smell_injection>"
+    matches = re.findall(pattern, response_text, re.DOTALL)
+    if matches:
+        try:
+            xml_text = f"<smell_injection>{matches[-1]}</smell_injection>"
+            return _parse_xml_to_dict(xml_text)
+        except Exception:
+            pass
+
+    # Strategy 3: Find any XML-like block
+    pattern = r"(<\w+>.*?</\w+>)"
+    matches = re.findall(pattern, response_text, re.DOTALL)
+    for match in reversed(matches):  # Try from last to first
+        try:
+            return _parse_xml_to_dict(match)
+        except Exception:
+            continue
+
+    return None
+
+
+def _parse_xml_to_dict(xml_text: str) -> Dict:
+    """Parse XML text to dictionary matching the expected JSON structure.
+
+    <smell_content> may contain raw diff text with Java generics like <Object>
+    that break XML parsing. We extract it via regex first, replace with a safe
+    placeholder, parse the rest with ET, then restore the content.
+    """
+    # 1. Extract <smell_content> via regex (may contain broken XML inside)
+    smell_content_raw = None
+    placeholder = "__SMELL_CONTENT_PLACEHOLDER__"
+    content_match = re.search(r"<smell_content>(.*?)</smell_content>", xml_text, re.DOTALL)
+    if content_match:
+        smell_content_raw = content_match.group(1).strip()
+        xml_text = xml_text[:content_match.start()] + f"<smell_content>{placeholder}</smell_content>" + xml_text[content_match.end():]
+
+    root = ET.fromstring(xml_text)
+
+    result = {}
+
+    # Parse basic fields
+    for field in ["smell_type", "hint_targeted", "hint_guided", "hint_open", "smell_content"]:
+        elem = root.find(field)
+        if elem is not None and elem.text:
+            val = elem.text.strip()
+            if field == "smell_content" and val == placeholder and smell_content_raw is not None:
+                val = smell_content_raw
+            result[field] = val
+
+    # Parse smell_function: [file_path, class_name, method_name]
+    smell_func = root.find("smell_function")
+    if smell_func is not None:
+        result["smell_function"] = [
+            smell_func.findtext("file_path", "").strip(),
+            smell_func.findtext("class_name", "").strip(),
+            smell_func.findtext("method_name", "").strip(),
+        ]
+
+    # Parse main_function: [[file_path, class_name, method_name], ...]
+    main_funcs = root.find("main_function")
+    if main_funcs is not None:
+        result["main_function"] = []
+        for func in main_funcs.findall("function"):
+            result["main_function"].append([
+                func.findtext("file_path", "").strip(),
+                func.findtext("class_name", "").strip(),
+                func.findtext("method_name", "").strip(),
+            ])
+
+    # Parse test_functions: [[file_path, class_name, method_name], ...]
+    test_funcs = root.find("test_functions")
+    if test_funcs is not None:
+        result["test_functions"] = []
+        for func in test_funcs.findall("function"):
+            result["test_functions"].append([
+                func.findtext("file_path", "").strip(),
+                func.findtext("class_name", "").strip(),
+                func.findtext("method_name", "").strip(),
+            ])
+
+    return result
+
+
+def extract_json_from_response(response_text: str) -> Optional[Dict]:
+    """Extract the JSON object from the agent's response text.
+
+    Tries several strategies:
+    1. Find JSON in ```json ... ``` fenced block (greedy, picks last block)
+    2. Find the last { ... } block in the text
+    """
+    if not response_text:
+        return None
+
+    # Strategy 1: fenced code block — use greedy match so diff content inside
+    # smell_content doesn't cause early termination
+    pattern = r"```json\s*(\{.*\})\s*```"
     matches = re.findall(pattern, response_text, re.DOTALL)
     if matches:
         try:

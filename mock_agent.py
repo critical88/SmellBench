@@ -80,7 +80,7 @@ class MockAgentClient(AgentClient):
         example_files = {
             "python": "click_case.json",
             "java": "commons-io_case.json",
-            "go": "click_case.json"  # Fallback to python for now
+            "go": "gin_case.json"
         }
 
         example_file = os.path.join(examples_dir, example_files.get(language, "click_case.json"))
@@ -101,11 +101,12 @@ class MockAgentClient(AgentClient):
                 # Update test_functions to point to the same file
                 example["test_functions"] = [[injected_path, class_name or "MockDataProcessor", method_name or "process_with_many_params"]]
 
-            # Return the example as JSON
+            # Convert to XML format
+            xml_output = self._dict_to_xml(example)
             response = f"""I've successfully injected a {example.get('smell_type', 'code smell')} into the codebase.
 
-```json
-{json.dumps(example, indent=2)}
+```xml
+{xml_output}
 ```
 
 The smell has been successfully injected and is ready for testing."""
@@ -130,7 +131,7 @@ The smell has been successfully injected and is ready for testing."""
         example_files = {
             "python": "click_case.json",
             "java": "commons-io_case.json",
-            "go": "click_case.json"
+            "go": "gin_case.json"
         }
 
         example_file = os.path.join(examples_dir, example_files.get(language, "click_case.json"))
@@ -232,19 +233,83 @@ The smell has been successfully injected and is ready for testing."""
         # Return language with most files
         return max(lang_files, key=lang_files.get)
 
+    def _dict_to_xml(self, data: dict) -> str:
+        """Convert dictionary to XML format matching the template structure."""
+        lines = ["<smell_injection>"]
+
+        # Add simple text fields
+        for field in ["smell_type", "hint_targeted", "hint_guided", "hint_open"]:
+            value = data.get(field, "")
+            lines.append(f"  <{field}>{value}</{field}>")
+
+        # Add smell_function
+        smell_func = data.get("smell_function", [])
+        if smell_func and len(smell_func) >= 3:
+            lines.append("  <smell_function>")
+            lines.append(f"    <file_path>{smell_func[0]}</file_path>")
+            lines.append(f"    <class_name>{smell_func[1] or ''}</class_name>")
+            lines.append(f"    <method_name>{smell_func[2] or ''}</method_name>")
+            lines.append("  </smell_function>")
+
+        # Add main_function (if exists)
+        main_funcs = data.get("main_function", [])
+        if main_funcs:
+            lines.append("  <main_function>")
+            for func in main_funcs:
+                if len(func) >= 3:
+                    lines.append("    <function>")
+                    lines.append(f"      <file_path>{func[0]}</file_path>")
+                    lines.append(f"      <class_name>{func[1] or ''}</class_name>")
+                    lines.append(f"      <method_name>{func[2] or ''}</method_name>")
+                    lines.append("    </function>")
+            lines.append("  </main_function>")
+
+        # Add test_functions
+        test_funcs = data.get("test_functions", [])
+        if test_funcs:
+            lines.append("  <test_functions>")
+            for func in test_funcs:
+                if len(func) >= 3:
+                    lines.append("    <function>")
+                    lines.append(f"      <file_path>{func[0]}</file_path>")
+                    lines.append(f"      <class_name>{func[1] or ''}</class_name>")
+                    lines.append(f"      <method_name>{func[2] or ''}</method_name>")
+                    lines.append("    </function>")
+            lines.append("  </test_functions>")
+
+        # Add smell_content (diff patch)
+        smell_content = data.get("smell_content", "")
+        if smell_content:
+            lines.append("  <smell_content>")
+            lines.append(smell_content)
+            lines.append("  </smell_content>")
+
+        lines.append("</smell_injection>")
+        return "\n".join(lines)
+
     def _get_fallback_injection_response(self, cwd=None):
         """Fallback response when example cases are not available."""
         response = f"""I'll inject a code smell into the codebase.
 
-```json
-{{
-  "smell_type": "Long Parameter List",
-  "hint_targeted": "Mock smell injection",
-  "hint_guided": "Check for methods with many parameters",
-  "hint_open": "Examine the code for parameter issues",
-  "smell_function": ["src/mock_file.py", "MockClass", "mock_method"],
-  "test_functions": [["src/mock_file.py", "MockClass", "mock_method"]]
-}}
+```xml
+<smell_injection>
+  <smell_type>Long Parameter List</smell_type>
+  <hint_targeted>Mock smell injection</hint_targeted>
+  <hint_guided>Check for methods with many parameters</hint_guided>
+  <hint_open>Examine the code for parameter issues</hint_open>
+  <smell_function>
+    <file_path>src/mock_file.py</file_path>
+    <class_name>MockClass</class_name>
+    <method_name>mock_method</method_name>
+  </smell_function>
+  <test_functions>
+    <function>
+      <file_path>src/mock_file.py</file_path>
+      <class_name>MockClass</class_name>
+      <method_name>mock_method</method_name>
+    </function>
+  </test_functions>
+</smell_injection>
 ```
 
 The smell has been successfully injected."""

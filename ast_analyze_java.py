@@ -779,6 +779,7 @@ def _parse_jacoco_for_covered_methods(xml_path: Path) -> Set[str]:
 def build_method_lookup_from_jacoco(
     jacoco_xml: Path,
     package_prefix: str,
+    src_root: Optional[Path] = None,
 ) -> Dict[str, JavaMethodInfo]:
     """
     Build method_lookup directly from JaCoCo coverage report.
@@ -787,6 +788,7 @@ def build_method_lookup_from_jacoco(
     Args:
         jacoco_xml: Path to JaCoCo XML report
         package_prefix: Package prefix to filter
+        src_root: Source root directory used to resolve absolute file paths
 
     Returns:
         method_lookup dictionary
@@ -799,6 +801,7 @@ def build_method_lookup_from_jacoco(
 
         for package in root.iter("package"):
             pkg_name = package.get("name", "").replace("/", ".")
+            pkg_path = package.get("name", "")  # e.g. "org/apache/commons/io"
 
             # Filter by package prefix
             if package_prefix and not pkg_name.startswith(package_prefix):
@@ -806,6 +809,15 @@ def build_method_lookup_from_jacoco(
 
             for cls in package.iter("class"):
                 class_name = cls.get("name", "").replace("/", ".")
+                sourcefilename = cls.get("sourcefilename", "")  # e.g. "FileUtils.java"
+
+                # Resolve absolute file path when src_root is available
+                if src_root and sourcefilename:
+                    filepath = (src_root / pkg_path / sourcefilename).resolve()
+                elif sourcefilename:
+                    filepath = Path(f"{pkg_path}/{sourcefilename}")
+                else:
+                    filepath = Path('')
 
                 # Extract simple class name (last part)
                 simple_class = class_name.split('.')[-1]
@@ -813,6 +825,7 @@ def build_method_lookup_from_jacoco(
                 for method in cls.iter("method"):
                     method_name = method.get("name", "")
                     method_desc = method.get("desc", "")
+                    start_line = int(method.get("line", "0"))
 
                     # Check if method has any coverage
                     has_coverage = False
@@ -831,9 +844,9 @@ def build_method_lookup_from_jacoco(
                         method_info = JavaMethodInfo(
                             package=pkg_name,
                             qualname=f"{simple_class}.{method_name}",
-                            filepath=Path(''),
-                            start=0,
-                            end=0,
+                            filepath=filepath,
+                            start=start_line,
+                            end=start_line,  # end line unknown from JaCoCo; same as start
                             return_type='',
                             parameter_types=[],
                             modifiers=frozenset()
@@ -1240,7 +1253,7 @@ def generate_java_function_mapping(
 
     # Step 6: Extract methods directly from JaCoCo coverage report
     print("Extracting methods from JaCoCo coverage...")
-    method_lookup = build_method_lookup_from_jacoco(jacoco_xml, package_prefix)
+    method_lookup = build_method_lookup_from_jacoco(jacoco_xml, package_prefix, src_root=src_root)
     print(f"Found {len(method_lookup)} methods with coverage")
 
     # Step 7: Build mapping
