@@ -73,7 +73,7 @@ fi
 # Step 3: Run smell benchmark pipeline
 # ---------------------------------------------------------------------------
 echo "Step 3: Running smell benchmark pipeline (agent=${AGENT_TYPE})"
-conda run -n testbed python -u smell_benchmark.py \
+python -u smell_benchmark.py \
     --project-name "${PROJECT_NAME}" \
     --agent "${AGENT_TYPE}" \
     ${EXTRA_ARGS}
