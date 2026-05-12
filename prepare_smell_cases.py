@@ -172,6 +172,7 @@ RUN git clone --recursive "$REPO_URL" {project_name} \\
 
 WORKDIR /workspace/project/{project_name}
 
+
 # Build the project
 RUN {build_cmd}
 
