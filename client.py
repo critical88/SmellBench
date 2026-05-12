@@ -391,7 +391,7 @@ class ClaudeCodeClient(CommandAgentClient):
 
     def _agent_command(self, model=None):
         model = model or self.model
-        cmd = "claude -p --verbose --output-format stream-json"
+        cmd = "claude -p --verbose --output-format stream-json --permission-mode acceptEdits"
         if model:
             cmd += f" --model {model}"
         return cmd
