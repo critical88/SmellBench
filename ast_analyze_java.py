@@ -520,6 +520,100 @@ def _discover_test_classes(test_root: Path) -> List[str]:
     return test_classes
 
 
+def _parse_failed_tests_from_surefire_reports(surefire_reports_dir: Path) -> Set[str]:
+    """
+    Parse Maven Surefire XML reports to extract failed test class names.
+
+    Surefire generates XML reports in target/surefire-reports/ with structure:
+      <testsuite name="com.example.TestClass" tests="5" failures="1" errors="0" ...>
+        <testcase name="testMethod" classname="com.example.TestClass" ...>
+          <failure message="..." type="AssertionError">...</failure>
+        </testcase>
+      </testsuite>
+
+    Args:
+        surefire_reports_dir: Path to target/surefire-reports directory
+
+    Returns:
+        Set of test class simple names (e.g., "TestClass", not "com.example.TestClass")
+    """
+    failed_tests = set()
+
+    if not surefire_reports_dir.exists():
+        print(f"Warning: Surefire reports directory not found: {surefire_reports_dir}")
+        return failed_tests
+
+    # Find all TEST-*.xml files in the surefire-reports directory
+    xml_files = list(surefire_reports_dir.glob("TEST-*.xml"))
+    print(f"Found {len(xml_files)} Surefire XML reports")
+
+    for xml_file in xml_files:
+        try:
+            tree = ET.parse(str(xml_file))
+            root = tree.getroot()
+
+            # Check testsuite attributes for failures or errors
+            testsuite_failures = int(root.get("failures", "0"))
+            testsuite_errors = int(root.get("errors", "0"))
+
+            if testsuite_failures > 0 or testsuite_errors > 0:
+                # Get the test class name
+                testsuite_name = root.get("name", "")
+                if testsuite_name:
+                    simple_name = testsuite_name.rsplit(".", 1)[-1]
+                    failed_tests.add(simple_name)
+                    print(f"  Failed: {simple_name} (failures={testsuite_failures}, errors={testsuite_errors})")
+
+        except Exception as e:
+            print(f"Warning: Failed to parse {xml_file}: {e}", file=sys.stderr)
+            continue
+
+    return failed_tests
+
+
+def _parse_failed_tests_from_output(maven_output: str) -> Set[str]:
+    """
+    DEPRECATED: Parse Maven test output to extract failed test class names.
+    Use _parse_failed_tests_from_surefire_reports() instead for more reliable parsing.
+
+    Kept as fallback when Surefire reports are not available.
+    """
+    failed_tests = set()
+
+    # Pattern 1: testMethod(com.example.TestClass)
+    pattern1 = re.compile(r'\w+\(([a-zA-Z0-9_.]+)\)')
+
+    # Pattern 2: <<< FAILURE! - in com.example.TestClass
+    pattern2 = re.compile(r'<<<\s+(FAILURE|ERROR)!\s+-\s+in\s+([a-zA-Z0-9_.]+)')
+
+    # Pattern 3: [ERROR] Tests run: ... <<< FAILURE! - in com.example.TestClass
+    pattern3 = re.compile(r'\[ERROR\].*?in\s+([a-zA-Z0-9_.]+)')
+
+    for line in maven_output.split('\n'):
+        # Check pattern 1
+        match = pattern1.search(line)
+        if match and ('Failed' in line or 'Error' in line or 'failed' in line or 'error' in line):
+            full_class_name = match.group(1)
+            simple_name = full_class_name.rsplit('.', 1)[-1]
+            failed_tests.add(simple_name)
+
+        # Check pattern 2
+        match = pattern2.search(line)
+        if match:
+            full_class_name = match.group(2)
+            simple_name = full_class_name.rsplit('.', 1)[-1]
+            failed_tests.add(simple_name)
+
+        # Check pattern 3
+        match = pattern3.search(line)
+        if match:
+            full_class_name = match.group(1)
+            simple_name = full_class_name.rsplit('.', 1)[-1]
+            failed_tests.add(simple_name)
+
+    return failed_tests
+
+
 def _run_maven_test_with_jacoco(
     project_root: Path,
     test_class: str,
@@ -1145,6 +1239,9 @@ def generate_java_function_mapping(
         exec_file.unlink()
         print(f"Removed old coverage file")
 
+    # Initialize failed_tests tracking
+    failed_tests: Set[str] = set()
+
     # Prepare clean environment for test execution
     env = os.environ.copy()
 
@@ -1185,7 +1282,7 @@ def generate_java_function_mapping(
 
     cmd.extend(["-pl", maven_module if maven_module else "."])
 
-    # Run tests with visible output
+    # Run tests with visible output (no capture, so user can see real-time progress)
     print(f"\nExecuting: {' '.join(cmd)}")
     print(f"Expected coverage file: {exec_file}\n")
     result = subprocess.run(
@@ -1195,8 +1292,24 @@ def generate_java_function_mapping(
         timeout=600,
     )
 
-    if result.returncode != 0:
-        print(f"\nWarning: Maven test returned code {result.returncode}")
+    # Parse Surefire reports to identify failed tests (more reliable than parsing output)
+    failed_tests = set()
+
+    # Determine surefire-reports directory
+    if maven_module:
+        surefire_reports_dir = project_root / maven_module / "target" / "surefire-reports"
+    else:
+        surefire_reports_dir = project_root / "target" / "surefire-reports"
+
+    print(f"\nParsing Surefire reports from: {surefire_reports_dir}")
+    failed_tests = _parse_failed_tests_from_surefire_reports(surefire_reports_dir)
+
+    if failed_tests:
+        print(f"\nFound {len(failed_tests)} failed test classes:")
+        for test in sorted(failed_tests):
+            print(f"  - {test}")
+    elif result.returncode != 0:
+        print(f"\nWarning: Maven test returned code {result.returncode} but no specific test failures identified")
 
     # Check if coverage file was created
     print(f"\nChecking for coverage file at: {exec_file}")
@@ -1263,10 +1376,19 @@ def generate_java_function_mapping(
     graph = JavaCoverageGraph(src_root, file_index, method_lookup, class_lookup)
     test_class_names = [tc.rsplit(".", 1)[-1] for tc in test_classes]
 
-    # All covered methods map to all tests (simplified approach)
+    # Filter out failed tests from the mapping
+    successful_test_names = [tc for tc in test_class_names if tc not in failed_tests]
+
+    if failed_tests:
+        print(f"\nExcluding {len(failed_tests)} failed test classes from mapping")
+        print(f"Including {len(successful_test_names)} successful test classes")
+    else:
+        print(f"All {len(test_class_names)} test classes passed")
+
+    # All covered methods map to successful tests (simplified approach)
     for method_key in method_lookup.keys():
         # All methods in method_lookup already have coverage (from JaCoCo)
-        for test_name in test_class_names:
+        for test_name in successful_test_names:
             graph.method_to_tests[method_key].add(test_name)
 
 
