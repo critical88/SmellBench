@@ -5,11 +5,13 @@ WORKDIR /workspace/
 # Install system dependencies for Java projects
 RUN apt-get update && apt-get install -y \
     git \
-    build-essential \
-    wget \
+    build-essential 
+    
+RUN apt-get install -y wget \
     curl \
-    maven \
-    && rm -rf /var/lib/apt/lists/*
+    maven
+RUN rm -rf /var/lib/apt/lists/*
+    
 
 # Install JDK 17 from Adoptium (Temurin)
 RUN wget https://download.java.net/java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL/openjdk-17.0.2_linux-x64_bin.tar.gz \
