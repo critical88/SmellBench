@@ -464,6 +464,32 @@ def print_usage_summary(usage_records: List[Dict]):
 # Test execution helpers
 # ---------------------------------------------------------------------------
 
+def apply_diff(
+    repo_path: str,
+    smell_content: str,
+    diff_label: str = "smell",
+) -> None:
+    """Apply a diff to the repository.
+
+    Args:
+        repo_path: Path to the repository
+        smell_content: Diff content to apply
+        diff_label: Label for the temporary diff file (for identification)
+
+    Raises:
+        Exception: If diff application fails
+    """
+    uuid_str = str(uuid.uuid4())
+    diff_file = os.path.join(repo_path, f"smell_{diff_label}_{uuid_str}.diff")
+    try:
+        with open(diff_file, "w") as f:
+            f.write(smell_content)
+        _run_git_command(["apply", os.path.abspath(diff_file)], cwd=repo_path)
+    finally:
+        if os.path.exists(diff_file):
+            os.remove(diff_file)
+
+
 def apply_diff_and_test(
     repo_name: str,
     repo_path: str,
@@ -482,18 +508,11 @@ def apply_diff_and_test(
     reset_repository(repo_path, commit_id)
 
     # Apply the diff
-    uuid_str = str(uuid.uuid4())
-    diff_file = os.path.join(repo_path, f"{repo_name}_smell_{uuid_str}.diff")
     try:
-        with open(diff_file, "w") as f:
-            f.write(smell_content)
-        _run_git_command(["apply", os.path.abspath(diff_file)], cwd=repo_path)
+        apply_diff(repo_path, smell_content, diff_label=f"{repo_name}_test")
     except Exception as e:
         reset_repository(repo_path, commit_id)
         return False, f"Failed to apply diff: {e}"
-    finally:
-        if os.path.exists(diff_file):
-            os.remove(diff_file)
 
     # Run tests
     try:
@@ -1172,6 +1191,18 @@ def process_one_smell(
         # Ask agent to fix
         print(f"  [{attempt_label}] Sending test errors to agent for fix ...")
         reset_repository(repo_path, commit_id)
+
+        # IMPORTANT: Re-apply the smell diff so agent can see the problematic code
+        # Without this, agent would be working on a clean repo and wouldn't know what to fix
+        print(f"  [{attempt_label}] Re-applying smell diff for fix context ...")
+        try:
+            apply_diff(repo_path, smell_content, diff_label=f"{repo_name}_fix_{attempt}")
+            print(f"  [{attempt_label}] Smell diff applied successfully")
+        except Exception as e:
+            print(f"  [{attempt_label}] Failed to re-apply smell diff: {e}")
+            reset_repository(repo_path, commit_id)
+            return None
+
         fix_prompt = build_fix_prompt(
             smell_type=smell_type,
             smell_content=smell_content,
