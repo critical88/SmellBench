@@ -158,6 +158,13 @@ CMD ["/bin/bash"]
 """
     elif language == "java":
         build_cmd = repo_info.get("build_cmd", "mvn compile -DskipTests")
+        jacoco_in_pom = repo_info.get("jacoco_in_pom", False)
+
+        # Download JaCoCo agent if the project doesn't have it configured in pom.xml
+        # This is needed for projects without JaCoCo in pom.xml that use JAVA_TOOL_OPTIONS injection
+        jacoco_download = ""
+        if not jacoco_in_pom:
+            jacoco_download = "# Download JaCoCo agent for coverage collection (project doesn't have JaCoCo in pom.xml)\nRUN mvn dependency:get -Dartifact=org.jacoco:org.jacoco.agent:0.8.12:jar:runtime || true\n\n"
 
         dockerfile = f"""\
 FROM {base_image}
@@ -172,11 +179,10 @@ RUN git clone --recursive "$REPO_URL" {project_name} \\
 
 WORKDIR /workspace/project/{project_name}
 
-
 # Build the project
 RUN {build_cmd}
 
-RUN git config --global user.email "smellbench@example.com"
+{jacoco_download}RUN git config --global user.email "smellbench@example.com"
 RUN git config --global user.name "smellbench"
 
 CMD ["/bin/bash"]
