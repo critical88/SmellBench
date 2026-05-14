@@ -429,7 +429,7 @@ def main():
     parser.add_argument(
         "--language",
         default="python",
-        help="Only process repos/entries with this language (default: python). Use empty string for all languages.",
+        help="Only process repos/entries with this language (default: python). Use 'all' or empty string for all languages.",
     )
     parser.add_argument(
         "--repo-list",
@@ -443,6 +443,11 @@ def main():
     if not output_dir.exists():
         print(f"Error: Output directory not found: {output_dir}")
         sys.exit(1)
+
+    # Normalize language filter: treat 'all' or empty string as no filter
+    language_filter = args.language
+    if language_filter and language_filter.lower() in ("all", ""):
+        language_filter = None
 
     # Load repo metadata from repo_list.json
     repo_list = load_repo_list(args.repo_list)
@@ -470,10 +475,10 @@ def main():
                 continue
 
             # Check language filter
-            if args.language:
+            if language_filter:
                 repo_lang = repo_metadata.get("language", "python").lower()
-                if repo_lang != args.language.lower():
-                    print(f"Warning: Project '{repo_name}' language ({repo_lang}) doesn't match filter ({args.language})")
+                if repo_lang != language_filter.lower():
+                    print(f"Warning: Project '{repo_name}' language ({repo_lang}) doesn't match filter ({language_filter})")
                     continue
 
             # Check if code_smells.json exists
@@ -492,9 +497,9 @@ def main():
                 continue
 
             # Check language filter
-            if args.language:
+            if language_filter:
                 repo_lang = repo_metadata.get("language", "python").lower()
-                if repo_lang != args.language.lower():
+                if repo_lang != language_filter.lower():
                     continue
 
             # Check if code_smells.json exists
@@ -533,7 +538,7 @@ def main():
             base_url=args.base_url,
             force=args.force,
             dry_run=args.dry_run,
-            language_filter=args.language,
+            language_filter=language_filter,
             repo_metadata=repo_metadata,
             merge_mode=args.merge,
         )

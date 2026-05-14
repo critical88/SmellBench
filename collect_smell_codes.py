@@ -37,7 +37,7 @@ def main():
     )
     parser.add_argument(
         "--language", default="python",
-        help="Only collect repos with this language (default: python). Use empty string to collect all languages.",
+        help="Only collect repos with this language (default: python). Use 'all' or empty string to collect all languages.",
     )
     parser.add_argument(
         "--project-name", action="append", dest="project_names",
@@ -47,6 +47,11 @@ def main():
 
     output_dir = args.output_dir
     out_path = args.out or os.path.join(output_dir, "smell_codes.json")
+
+    # Normalize language filter: treat 'all' or empty string as no filter
+    language_filter = args.language
+    if language_filter and language_filter.lower() in ("all", ""):
+        language_filter = None
 
     # Load repo list
     with open(args.repo_list, "r", encoding="utf-8") as f:
@@ -67,9 +72,9 @@ def main():
             continue
 
         # Filter by language if specified
-        if args.language:
+        if language_filter:
             repo_lang = spec.get("language", "python").lower()  # Default to python if not specified
-            if repo_lang != args.language.lower():
+            if repo_lang != language_filter.lower():
                 skipped_repos.append((repo_name, f"language mismatch ({repo_lang})"))
                 continue
 
@@ -82,14 +87,21 @@ def main():
         with open(code_smells_path, "r", encoding="utf-8") as f:
             entries = json.load(f)
 
-        # Additional filtering: filter entries by language if they have language field
-        if args.language:
+        # Additional filtering: filter entries by language
+        # If entry has no language field, inherit from repo metadata
+        if language_filter:
             original_count = len(entries)
-            entries = [
-                e for e in entries
-                if e.get("language", "").lower() == args.language.lower()
-                or not e.get("language")  # Keep entries without language field
-            ]
+            filtered_entries = []
+            for e in entries:
+                entry_lang = e.get("language", "")
+                # If entry has no language, use repo's language
+                if not entry_lang:
+                    entry_lang = spec.get("language", "python")
+
+                if entry_lang.lower() == language_filter.lower():
+                    filtered_entries.append(e)
+
+            entries = filtered_entries
             if len(entries) < original_count:
                 print(f"[filter] {repo_name}: filtered {original_count} -> {len(entries)} entries by language")
 
@@ -115,8 +127,10 @@ def main():
         for repo, reason in skipped_repos:
             print(f"  - {repo}: {reason}")
 
-    if args.language:
-        print(f"\nLanguage filter: {args.language}")
+    if language_filter:
+        print(f"\nLanguage filter: {language_filter}")
+    else:
+        print(f"\nLanguage filter: all languages")
 
     print(f"\nTotal: {len(all_entries)} entries -> {out_path}")
 
