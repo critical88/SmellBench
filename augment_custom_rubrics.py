@@ -457,36 +457,53 @@ def main():
     if args.project_names:
         # Process only specified projects
         for repo_name in args.project_names:
+            # Check if repo exists in repo_list
+            if repo_name not in repo_list:
+                print(f"Warning: Project '{repo_name}' not found in {args.repo_list}")
+                continue
+
+            repo_metadata = repo_list[repo_name]
+
+            # Check if selected
+            if not repo_metadata.get("selected", False):
+                print(f"Warning: Project '{repo_name}' is not selected in {args.repo_list}")
+                continue
+
+            # Check language filter
+            if args.language:
+                repo_lang = repo_metadata.get("language", "python").lower()
+                if repo_lang != args.language.lower():
+                    print(f"Warning: Project '{repo_name}' language ({repo_lang}) doesn't match filter ({args.language})")
+                    continue
+
+            # Check if code_smells.json exists
             repo_dir = output_dir / repo_name
-            if not repo_dir.exists():
-                print(f"Warning: Project directory not found: {repo_dir}")
+            code_smells_path = repo_dir / "code_smells.json"
+            if not code_smells_path.exists():
+                print(f"Warning: code_smells.json not found for '{repo_name}' at {code_smells_path}")
                 continue
 
-            code_smells_path = repo_dir / "code_smells.json"
-            if code_smells_path.exists():
-                repo_metadata = repo_list.get(repo_name, {})
-                code_smells_files.append((repo_name, code_smells_path, repo_metadata))
-            else:
-                print(f"Warning: code_smells.json not found in {repo_dir}")
+            code_smells_files.append((repo_name, code_smells_path, repo_metadata))
     else:
-        # Find all repo directories with code_smells.json
-        for repo_dir in output_dir.iterdir():
-            if not repo_dir.is_dir():
+        # Process all repos from repo_list that match criteria
+        for repo_name, repo_metadata in repo_list.items():
+            # Check if repo is selected
+            if not repo_metadata.get("selected", False):
                 continue
 
-            repo_name = repo_dir.name
+            # Check language filter
+            if args.language:
+                repo_lang = repo_metadata.get("language", "python").lower()
+                if repo_lang != args.language.lower():
+                    continue
+
+            # Check if code_smells.json exists
+            repo_dir = output_dir / repo_name
             code_smells_path = repo_dir / "code_smells.json"
-            if code_smells_path.exists():
-                repo_metadata = repo_list.get(repo_name, {})
-                # Check if repo is selected and matches language filter
-                if repo_metadata:
-                    if not repo_metadata.get("selected", False):
-                        continue
-                    if args.language:
-                        repo_lang = repo_metadata.get("language", "").lower()
-                        if repo_lang and repo_lang != args.language.lower():
-                            continue
-                code_smells_files.append((repo_name, code_smells_path, repo_metadata))
+            if not code_smells_path.exists():
+                continue
+
+            code_smells_files.append((repo_name, code_smells_path, repo_metadata))
 
     if not code_smells_files:
         print(f"No code_smells.json files found in {output_dir}")
