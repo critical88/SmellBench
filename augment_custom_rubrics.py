@@ -1,29 +1,14 @@
 """
-Augment Custom Rubrics
+Augment Smell Analysis
 ========================
 Scans all code_smells.json files in output/{repo-name}/ directories
-and generates missing custom_rubrics for entries that have fewer than 2 rubrics.
+and generates missing smell_analysis for entries.
 
 ## Generation Logic
 
-The script will generate custom_rubrics when ANY of these conditions are met:
+The script will generate smell_analysis when ANY of these conditions are met:
 1. **--force flag**: Regenerate everything (overwrite existing)
 2. **Missing analysis**: Entry has no smell_analysis
-3. **Invalid rubrics**: custom_rubrics is not a valid list with required fields
-4. **Insufficient rubrics**: Less than 2 rubrics present
-
-## Modes
-
-### Replace Mode (default)
-- Completely replaces smell_analysis and custom_rubrics with newly generated content
-- Overwrites analysis_usage with new usage statistics
-- Use when you want fresh, consistent analysis
-
-### Merge Mode (--merge)
-- Preserves existing smell_analysis if it exists
-- Merges new rubrics with existing ones (deduplicates by name)
-- Keeps existing analysis_usage if analysis is preserved
-- Use when you want to augment existing content without losing it
 
 ## Selection Logic
 
@@ -45,8 +30,8 @@ python augment_custom_rubrics.py
 # Process all selected repos of any language
 python augment_custom_rubrics.py --language all
 
-# Process specific project with merge mode (ignores selected status)
-python augment_custom_rubrics.py --project-name click --merge
+# Process specific project (ignores selected status)
+python augment_custom_rubrics.py --project-name click
 
 # Preview what would be done
 python augment_custom_rubrics.py --language python --dry-run
@@ -60,8 +45,7 @@ python augment_custom_rubrics.py --project-name flask --force
 - `--output-dir OUTPUT_DIR`: Root output directory (default: output)
 - `--model MODEL`: LLM model to use (default: anthropic/claude-sonnet-4-5-20250929)
 - `--base-url URL`: Optional API base URL
-- `--force`: Force regeneration even if rubrics already exist
-- `--merge`: Merge new rubrics with existing ones instead of replacing
+- `--force`: Force regeneration even if analysis already exists
 - `--dry-run`: Show what would be done without making changes
 - `--project-name NAME`: Process specific project(s), can be specified multiple times
 - `--language LANG`: Only process repos/entries with this language (python/java/go)
@@ -82,7 +66,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -90,9 +74,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from claude_cli import call_llm
 from smell_benchmark import (
     _parse_xml_tag,
-    _parse_xml_rubrics,
-    _has_valid_rubrics,
-    _RUBRIC_REQUIRED_FIELDS,
 )
 
 
@@ -118,17 +99,17 @@ def load_smell_analysis_prompt() -> str:
         return f.read()
 
 
-def generate_custom_rubrics(
+def generate_smell_analysis_only(
     smell_type: str,
     smell_content: str,
     smell_description: str = "",
     model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
-) -> tuple[Optional[str], List[Dict], Dict]:
-    """Generate smell analysis and custom rubrics for a case via LLM.
+) -> tuple[Optional[str], Dict]:
+    """Generate smell analysis for a case via LLM.
 
     Returns:
-        (smell_analysis, custom_rubrics, usage)
+        (smell_analysis, usage)
     """
     prompt_template = load_smell_analysis_prompt()
 
@@ -143,17 +124,15 @@ def generate_custom_rubrics(
     raw = result.get("raw", "")
 
     smell_analysis = _parse_xml_tag(raw, "analysis")
-    custom_rubrics = _parse_xml_rubrics(raw)
 
     if smell_analysis:
-        print(f"    Generated smell analysis ({len(smell_analysis)} chars), "
-              f"{len(custom_rubrics)} custom rubrics")
+        print(f"    Generated smell analysis ({len(smell_analysis)} chars)")
     else:
         # Fallback: use raw text as analysis if XML parsing fails
         smell_analysis = raw
         print(f"    Generated smell analysis ({len(smell_analysis)} chars, XML parse failed, using raw)")
 
-    return smell_analysis, custom_rubrics, usage
+    return smell_analysis, usage
 
 
 def process_code_smells_file(
@@ -165,20 +144,18 @@ def process_code_smells_file(
     dry_run: bool = False,
     language_filter: Optional[str] = None,
     repo_metadata: Optional[Dict] = None,
-    merge_mode: bool = False,
 ) -> Dict[str, int]:
-    """Process a single code_smells.json file and augment missing custom_rubrics.
+    """Process a single code_smells.json file and augment missing smell_analysis.
 
     Args:
         file_path: Path to code_smells.json
         repo_name: Name of the repository
         model: Model to use for generation
         base_url: Optional base URL for API
-        force: Force regeneration even if rubrics exist
+        force: Force regeneration even if analysis exists
         dry_run: Don't actually modify files
         language_filter: Only process entries matching this language
         repo_metadata: Metadata from repo_list.json (includes language, selected, etc.)
-        merge_mode: If True, merge new rubrics with existing ones (keep existing if >=2)
 
     Returns:
         Statistics dict with counts of processed/skipped/updated entries
@@ -246,8 +223,7 @@ def process_code_smells_file(
                 stats["skipped_language"] += 1
                 continue
 
-        # Check if custom_rubrics need to be generated
-        existing_rubrics = entry.get("custom_rubrics", [])
+        # Check if smell_analysis needs to be generated
         existing_analysis = entry.get("smell_analysis", "")
         needs_generation = False
         generation_reason = ""
@@ -255,28 +231,9 @@ def process_code_smells_file(
         if force:
             needs_generation = True
             generation_reason = "forced"
-        elif merge_mode:
-            # In merge mode, only generate if missing analysis or < 2 valid rubrics
-            if not existing_analysis:
-                needs_generation = True
-                generation_reason = "missing analysis"
-            elif not _has_valid_rubrics(existing_rubrics):
-                needs_generation = True
-                generation_reason = "invalid rubrics"
-            elif len(existing_rubrics) < 2:
-                needs_generation = True
-                generation_reason = f"only {len(existing_rubrics)} rubrics (will merge)"
-        else:
-            # Default mode: replace if missing analysis or insufficient rubrics
-            if not existing_analysis:
-                needs_generation = True
-                generation_reason = "missing analysis"
-            elif not _has_valid_rubrics(existing_rubrics):
-                needs_generation = True
-                generation_reason = "invalid rubrics"
-            elif len(existing_rubrics) < 2:
-                needs_generation = True
-                generation_reason = f"only {len(existing_rubrics)} rubrics (will replace)"
+        elif not existing_analysis:
+            needs_generation = True
+            generation_reason = "missing analysis"
 
         if not needs_generation:
             stats["skipped_complete"] += 1
@@ -288,17 +245,17 @@ def process_code_smells_file(
         smell_description = entry.get("description", "")
         instance_id = entry.get("instance_id", f"entry_{idx}")
 
-        print(f"  [{idx+1}/{len(entries)}] Generating rubrics for {instance_id} "
-              f"(current: {len(existing_rubrics)} rubrics, reason: {generation_reason})")
+        print(f"  [{idx+1}/{len(entries)}] Generating analysis for {instance_id} "
+              f"(reason: {generation_reason})")
 
         if dry_run:
             stats["updated"] += 1
-            print(f"    [DRY RUN] Would generate analysis and rubrics")
+            print(f"    [DRY RUN] Would generate analysis")
             continue
 
         try:
-            # Generate analysis and rubrics
-            analysis, rubrics, usage = generate_custom_rubrics(
+            # Generate analysis only
+            analysis, usage = generate_smell_analysis_only(
                 smell_type=smell_type,
                 smell_content=smell_content,
                 smell_description=smell_description,
@@ -306,48 +263,9 @@ def process_code_smells_file(
                 base_url=base_url,
             )
 
-            # Validate that we got at least 2 valid rubrics
-            if not _has_valid_rubrics(rubrics) or len(rubrics) < 2:
-                print(f"    Warning: Generated only {len(rubrics)} valid rubrics, expected 2+")
-                stats["failed"] += 1
-                continue
-
-            # Update strategy based on merge_mode
-            if merge_mode and existing_rubrics and len(existing_rubrics) >= 1:
-                # Merge mode: combine new rubrics with existing ones, deduplicate by name
-                existing_names = {r.get("name", "") for r in existing_rubrics}
-                merged_rubrics = list(existing_rubrics)  # Start with existing
-
-                for new_rubric in rubrics:
-                    rubric_name = new_rubric.get("name", "")
-                    if rubric_name not in existing_names:
-                        merged_rubrics.append(new_rubric)
-                        existing_names.add(rubric_name)
-
-                # Keep only first 2 unique rubrics (or all if <2)
-                final_rubrics = merged_rubrics[:2] if len(merged_rubrics) >= 2 else merged_rubrics
-
-                # Use existing analysis if present, otherwise use new
-                final_analysis = existing_analysis if existing_analysis else analysis
-
-                # Keep existing analysis_usage if we kept existing analysis
-                if existing_analysis and "analysis_usage" in entry:
-                    # Don't update analysis_usage if we kept the existing analysis
-                    pass
-                else:
-                    # Update with new usage if analysis was missing
-                    entry["analysis_usage"] = {**usage, "model": model}
-
-                print(f"    Merged: {len(existing_rubrics)} existing + {len(rubrics)} new = {len(final_rubrics)} final rubrics")
-            else:
-                # Replace mode: use newly generated content entirely
-                final_rubrics = rubrics
-                final_analysis = analysis
-                entry["analysis_usage"] = {**usage, "model": model}
-                print(f"    Replaced: {len(final_rubrics)} new rubrics")
-
-            entry["smell_analysis"] = final_analysis
-            entry["custom_rubrics"] = final_rubrics
+            # Update entry with analysis
+            entry["smell_analysis"] = analysis
+            entry["analysis_usage"] = {**usage, "model": model}
 
             # Update timing_stats if it exists
             if "timing_stats" in entry and "all_candidate_attempts" in entry["timing_stats"]:
@@ -376,14 +294,14 @@ def process_code_smells_file(
             # Effective input seen by model includes cache read
             effective_in = in_tok + cache_read
 
-            print(f"    Generated {len(final_rubrics)} rubrics")
+            print(f"    Generated analysis")
             print(f"    Tokens: in={in_tok:,}, cache_read={cache_read:,}, cache_create={cache_create:,}, "
                   f"out={out_tok:,}")
             print(f"    Total: {total_in:,} input + {cache_read:,} cached = {effective_in:,} effective, "
                   f"cost=${cost:.4f}")
 
         except Exception as e:
-            print(f"    Error generating rubrics: {e}")
+            print(f"    Error generating analysis: {e}")
             stats["failed"] += 1
             continue
 
@@ -402,7 +320,7 @@ def process_code_smells_file(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Augment custom_rubrics in code_smells.json files"
+        description="Augment smell_analysis in code_smells.json files"
     )
     parser.add_argument(
         "--output-dir",
@@ -422,12 +340,7 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Regenerate rubrics even for entries that already have them",
-    )
-    parser.add_argument(
-        "--merge",
-        action="store_true",
-        help="Merge new rubrics with existing ones (default: replace entirely)",
+        help="Regenerate analysis even for entries that already have it",
     )
     parser.add_argument(
         "--dry-run",
@@ -553,7 +466,6 @@ def main():
             dry_run=args.dry_run,
             language_filter=language_filter,
             repo_metadata=repo_metadata,
-            merge_mode=args.merge,
         )
 
         # Accumulate stats

@@ -106,18 +106,6 @@ def _get_smell_analysis_prompt() -> str:
     return _SMELL_ANALYSIS_PROMPT_CACHE
 
 
-_RUBRIC_REQUIRED_FIELDS = ("name", "description", "excellent", "good",
-                           "acceptable", "below_average", "poor")
-
-
-def _has_valid_rubrics(rubrics: Any) -> bool:
-    """Check that rubrics is a non-empty list where each entry has all required fields."""
-    if not isinstance(rubrics, list) or len(rubrics) == 0:
-        return False
-    return all(
-        isinstance(r, dict) and all(r.get(f) for f in _RUBRIC_REQUIRED_FIELDS)
-        for r in rubrics
-    )
 
 
 def _parse_xml_tag(text: str, tag: str) -> Optional[str]:
@@ -126,20 +114,6 @@ def _parse_xml_tag(text: str, tag: str) -> Optional[str]:
     return m.group(1).strip() if m else None
 
 
-def _parse_xml_rubrics(text: str) -> List[Dict]:
-    """Extract all <rubric>...</rubric> blocks and parse their sub-tags."""
-    rubrics = []
-    for m in re.finditer(r"<rubric>(.*?)</rubric>", text, re.DOTALL):
-        block = m.group(1)
-        rubric: Dict[str, Any] = {}
-        for field in ("name", "description", "excellent", "good",
-                      "acceptable", "below_average", "poor"):
-            val = _parse_xml_tag(block, field)
-            if val is not None:
-                rubric[field] = val
-        if rubric.get("name"):
-            rubrics.append(rubric)
-    return rubrics
 
 
 def generate_smell_analysis(
@@ -149,17 +123,17 @@ def generate_smell_analysis(
     model: str = "anthropic/claude-sonnet-4-5-20250929",
     base_url: Optional[str] = None,
     agent: str = "claude_code",
-) -> Tuple[Optional[str], List[Dict], Dict]:
-    """Generate smell analysis and custom rubrics for a case via LLM.
+) -> Tuple[Optional[str], Dict]:
+    """Generate smell analysis for a case via LLM.
 
-    The LLM returns XML-tagged output (<analysis>, <rubric>) which is
+    The LLM returns XML-tagged output (<analysis>) which is
     more robust than JSON for long free-text content.
 
     Args:
         agent: If "mock" or "test", uses mock responses without API calls
 
     Returns:
-        (smell_analysis, custom_rubrics, usage)
+        (smell_analysis, usage)
     """
     # Use mock model if agent is mock/test
     if agent.lower() in ("mock", "test"):
@@ -176,17 +150,15 @@ def generate_smell_analysis(
     raw = result.get("raw", "")
 
     smell_analysis = _parse_xml_tag(raw, "analysis")
-    custom_rubrics = _parse_xml_rubrics(raw)
 
     if smell_analysis:
-        print(f"  Smell analysis generated ({len(smell_analysis)} chars), "
-              f"{len(custom_rubrics)} custom rubrics")
+        print(f"  Smell analysis generated ({len(smell_analysis)} chars)")
     else:
         # Fallback: use raw text as analysis if XML parsing fails
         smell_analysis = raw
         print(f"  Smell analysis generated ({len(smell_analysis)} chars, XML parse failed, using raw)")
 
-    return smell_analysis, custom_rubrics, usage
+    return smell_analysis, usage
 
 
 def call_agent(
@@ -1277,10 +1249,10 @@ def process_one_smell(
         "usage": total_usage,
     }
 
-    # Generate smell analysis + custom rubrics via LLM
+    # Generate smell analysis via LLM
     print(f"  Generating smell analysis for {instance_id} ...")
     analysis_start_time = time.time()
-    analysis, rubrics, analysis_usage = generate_smell_analysis(
+    analysis, analysis_usage = generate_smell_analysis(
         smell_type=smell_type,
         smell_content=smell_content,
         smell_description=smell_desc,
@@ -1301,7 +1273,6 @@ def process_one_smell(
           f"out={out_tok}, total_in={in_tok + cache_read}, cost=${analysis_usage.get('total_cost_usd', 0):.4f}")
 
     result["smell_analysis"] = analysis
-    result["custom_rubrics"] = rubrics
     result["analysis_usage"] = {**analysis_usage, "model": model}
 
     # Calculate total duration for this candidate attempt
@@ -1446,7 +1417,6 @@ def main(args):
             if has_success:
                 # Has successful attempt
                 if (entry.get("smell_analysis")
-                        and _has_valid_rubrics(entry.get("custom_rubrics"))
                         and entry.get("analysis_usage")):
                     completed_pairs.add(key)
                 else:
@@ -1635,7 +1605,7 @@ def main(args):
                       f"{smell_type} ({difficulty}) -> generating analysis only ---")
 
                 analysis_start = time.time()
-                analysis, rubrics, analysis_usage = generate_smell_analysis(
+                analysis, analysis_usage = generate_smell_analysis(
                     smell_type=smell_type,
                     smell_content=entry["smell_content"],
                     smell_description=smell_desc,
@@ -1646,7 +1616,6 @@ def main(args):
                 analysis_duration = time.time() - analysis_start
 
                 entry["smell_analysis"] = analysis
-                entry["custom_rubrics"] = rubrics
                 entry["analysis_usage"] = {**analysis_usage, "model": args.model}
 
                 # Update timing_stats: add smell_analysis info to the successful attempt
