@@ -5,12 +5,30 @@ Reads repo_list.json, finds repos marked as selected, loads each repo's
 output/{repo_name}/code_smells.json, and writes the combined list to
 output/smell_codes.json.
 
-Supports filtering by language to collect only specific language projects.
+## Selection Logic
 
-Usage:
-    python collect_smell_codes.py                                      # All selected repos
-    python collect_smell_codes.py --language python                    # Only Python repos
-    python collect_smell_codes.py --project-name click --project-name flask  # Specific repos only
+**Default behavior** (no --project-name):
+- Only processes repos with "selected": true in repo_list.json
+- Applies language filter if specified
+
+**With --project-name**:
+- Processes specified projects regardless of "selected" status
+- User's explicit choice overrides repo_list.json settings
+- Still applies language filter if specified
+
+## Usage Examples
+
+    python collect_smell_codes.py
+    # Collects all repos with selected=true and language=python (default)
+
+    python collect_smell_codes.py --language python
+    # Explicitly filter for Python repos (same as default)
+
+    python collect_smell_codes.py --language all
+    # Collects all selected repos regardless of language
+
+    python collect_smell_codes.py --project-name click --project-name flask
+    # Collects only click and flask, ignoring selected status
 """
 
 import argparse
@@ -66,8 +84,8 @@ def main():
         if args.project_names and repo_name not in args.project_names:
             continue
 
-        # Check if repo is selected
-        if not spec.get("selected", False):
+        # Check if repo is selected (skip this check if user explicitly specified project names)
+        if not args.project_names and not spec.get("selected", False):
             skipped_repos.append((repo_name, "not selected"))
             continue
 

@@ -25,19 +25,33 @@ The script will generate custom_rubrics when ANY of these conditions are met:
 - Keeps existing analysis_usage if analysis is preserved
 - Use when you want to augment existing content without losing it
 
+## Selection Logic
+
+**Default behavior** (no --project-name):
+- Only processes repos with "selected": true in repo_list.json
+- Applies language filter (default: python)
+
+**With --project-name**:
+- Processes specified projects regardless of "selected" status
+- User's explicit choice overrides repo_list.json settings
+- Still applies language filter if specified
+
 ## Usage Examples
 
 ```bash
-# Process all selected Python repos
-python augment_custom_rubrics.py --language python
+# Process all selected Python repos (default)
+python augment_custom_rubrics.py
 
-# Process specific project with merge mode
+# Process all selected repos of any language
+python augment_custom_rubrics.py --language all
+
+# Process specific project with merge mode (ignores selected status)
 python augment_custom_rubrics.py --project-name click --merge
 
 # Preview what would be done
 python augment_custom_rubrics.py --language python --dry-run
 
-# Force regenerate everything
+# Force regenerate everything for specific project
 python augment_custom_rubrics.py --project-name flask --force
 ```
 
@@ -469,10 +483,8 @@ def main():
 
             repo_metadata = repo_list[repo_name]
 
-            # Check if selected
-            if not repo_metadata.get("selected", False):
-                print(f"Warning: Project '{repo_name}' is not selected in {args.repo_list}")
-                continue
+            # When user explicitly specifies project names, ignore selected check
+            # (user's explicit choice overrides repo_list.json settings)
 
             # Check language filter
             if language_filter:
@@ -491,8 +503,9 @@ def main():
             code_smells_files.append((repo_name, code_smells_path, repo_metadata))
     else:
         # Process all repos from repo_list that match criteria
+        # IMPORTANT: Only process repos marked as "selected": true in repo_list.json
         for repo_name, repo_metadata in repo_list.items():
-            # Check if repo is selected
+            # Check if repo is selected (this is a required filter when not using --project-name)
             if not repo_metadata.get("selected", False):
                 continue
 
