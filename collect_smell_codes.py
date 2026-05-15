@@ -64,12 +64,21 @@ def main():
     args = parser.parse_args()
 
     output_dir = args.output_dir
-    out_path = args.out or os.path.join(output_dir, "smell_codes.json")
 
     # Normalize language filter: treat 'all' or empty string as no filter
     language_filter = args.language
     if language_filter and language_filter.lower() in ("all", ""):
         language_filter = None
+
+    # Generate output filename with language suffix if specified
+    if args.out:
+        out_path = args.out
+    else:
+        if language_filter:
+            filename = f"smell_codes_{language_filter.lower()}.json"
+        else:
+            filename = "smell_codes.json"
+        out_path = os.path.join(output_dir, filename)
 
     # Load repo list
     with open(args.repo_list, "r", encoding="utf-8") as f:
