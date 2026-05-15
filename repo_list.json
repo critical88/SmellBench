@@ -110,7 +110,8 @@
     "build_cmd": "mvn compile -pl gson",
     "test_cmd": "-pl gson",
     "package_prefix": "com.google.gson",
-    "jacoco_in_pom": false
+    "jacoco_in_pom": false,
+    "selected": true
   },
   "guava": {
     "url": "https://github.com/google/guava.git",
@@ -129,6 +130,7 @@
     "build_tool": "maven",
     "build_cmd": "mvn compile",
     "test_cmd": "",
+    "selected": true,
     "package_prefix": "org.apache.commons.io",
     "jacoco_in_pom": true
   },
@@ -142,7 +144,8 @@
     "build_cmd": "mvn compile -pl core",
     "test_cmd": "-pl core",
     "package_prefix": "com.alibaba.fastjson2",
-    "jacoco_in_pom": false
+    "jacoco_in_pom": false,
+    "selected": true
   },
   "gin": {
     "url": "https://github.com/gin-gonic/gin.git",
