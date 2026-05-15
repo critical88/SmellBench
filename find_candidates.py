@@ -15,10 +15,36 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from file_collector import collect_source_files
 from claude_cli import call_claude_cli, extract_json_from_response
+
+
+# ---------------------------------------------------------------------------
+# Template loading
+# ---------------------------------------------------------------------------
+
+def _load_candidate_template() -> str:
+    """Load the candidate discovery prompt template from template directory."""
+    template_path = Path(__file__).parent / "template" / "candidate_template.md"
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+# Cache the prompt template to avoid reading file multiple times
+_CANDIDATE_TEMPLATE_CACHE = None
+
+def _get_candidate_template() -> str:
+    """Get the candidate discovery prompt template (cached)."""
+    global _CANDIDATE_TEMPLATE_CACHE
+    if _CANDIDATE_TEMPLATE_CACHE is None:
+        _CANDIDATE_TEMPLATE_CACHE = _load_candidate_template()
+    return _CANDIDATE_TEMPLATE_CACHE
 
 
 # ---------------------------------------------------------------------------
@@ -44,56 +70,15 @@ def build_candidate_prompt(
     hints = _smell_search_hints(smell_type)
     hints_line = f"\n**What to look for**: {hints}" if hints else ""
 
-    return f"""You are a code analysis expert. Your task is to find methods/classes where it would be **convenient to inject** a specific code smell — NOT to find places that already exhibit this smell.
+    # Load template and substitute placeholders
+    template = _get_candidate_template()
+    prompt = template.replace("[SRC_PATH]", src_path)
+    prompt = prompt.replace("[ELIGIBLE_FILES]", files_desc)
+    prompt = prompt.replace("[SMELL_TYPE]", smell_type)
+    prompt = prompt.replace("[SMELL_DESC]", smell_desc)
+    prompt = prompt.replace("[HINTS]", hints_line)
 
-The goal is to identify code locations where the structure, complexity, and cross-module relationships make it natural and easy to introduce the smell while keeping the code compilable and tests passing.
-
-## Source path: `{src_path}`
-
-## Eligible files (lines > 500, no utility/helper files)
-{files_desc}
-
-## Smell type to inject: {smell_type}
-{smell_desc}
-{hints_line}
-
-## Strategy — BE EFFICIENT
-Do NOT read every file. Instead:
-1. Based on file names and module structure, pick the 3-5 most promising files
-2. Use `grep` to quickly locate class definitions, large methods, and cross-module interactions
-3. Only read specific sections of files (use line ranges) to verify candidates
-4. Prioritize files with core business logic (e.g., core.py, models.py, engine.py) over peripherals
-
-## Requirements
-Find exactly 5 candidates. Each candidate should be a method/class where injecting `{smell_type}` would be **easy and natural** — meaning the surrounding code structure supports the injection without breaking functionality.
-
-Each candidate needs:
-- `file`: relative path from repo root
-- `class_name`: class name (null if standalone function)
-- `method_name`: method/function name (for god_classes/interface_segregation, can be null)
-- `line_number`: the actual starting line number (verify by reading)
-- `reason`: 1-2 sentences explaining why this location is a good **injection point** (what structural properties make it easy to introduce the smell here)
-
-**IMPORTANT**: At most 2 candidates may come from the same file. Spread candidates across different files to ensure diversity.
-
-**DIVERSITY REQUIREMENT**: The 5 candidates must be substantially different from each other:
-- They should involve different classes/functions with different responsibilities
-- They should target different code patterns or architectural concerns
-- Avoid picking multiple methods from the same class or methods that do similar things
-
-## Output
-After finding all candidates, output a single JSON block:
-```json
-{{
-  "{smell_type}": [
-    {{"file": "...", "class_name": "...", "method_name": "...", "line_number": 123, "reason": "..."}}
-  ]
-}}
-```
-
-The key must be exactly: {smell_type}
-It must have exactly 5 entries.
-"""
+    return prompt
 
 
 def _smell_search_hints(smell_type: str) -> str:

@@ -114,6 +114,13 @@ def main():
         with open(code_smells_path, "r", encoding="utf-8") as f:
             entries = json.load(f)
 
+        # Filter out entries without instance_id (incomplete entries)
+        original_count = len(entries)
+        entries = [e for e in entries if e.get("instance_id")]
+        if len(entries) < original_count:
+            skipped_count = original_count - len(entries)
+            print(f"[filter] {repo_name}: skipped {skipped_count} incomplete entries (no instance_id)")
+
         # Additional filtering: filter entries by language
         # If entry has no language field, inherit from repo metadata
         if language_filter:
