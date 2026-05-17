@@ -121,6 +121,16 @@ def main():
             skipped_count = original_count - len(entries)
             print(f"[filter] {repo_name}: skipped {skipped_count} incomplete entries (no instance_id)")
 
+        # Add language field to each entry's settings from repo metadata
+        repo_language = spec.get("language", "python")  # Default to python if not specified
+        for entry in entries:
+            # Ensure settings dict exists
+            if "settings" not in entry:
+                entry["settings"] = {}
+            # Add language field if not already present
+            if "language" not in entry["settings"]:
+                entry["settings"]["language"] = repo_language
+
         # Additional filtering: filter entries by language
         # If entry has no language field, inherit from repo metadata
         if language_filter:
