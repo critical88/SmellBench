@@ -78,180 +78,6 @@ DIFFICULTY_GUIDANCE = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Smell-type-specific rubrics
-# ---------------------------------------------------------------------------
-
-RUBRICS: Dict[str, Dict[str, Any]] = {
-    "feature_envy": {
-        "description": "A function that is more interested in data from other classes than its own, indicating misplaced behavior.",
-        "focus": "Whether the envious method is moved to the class whose data it primarily accesses, and whether data locality is improved.",
-        "criteria": [
-            {
-                "name": "Method Placement",
-                "excellent": "Method moved to the correct class that owns the data",
-                "acceptable": "Method partially restructured but still accesses foreign data",
-                "poor": "Method remains in the wrong class",
-            },
-            {
-                "name": "Data Locality",
-                "excellent": "After refactoring, the method operates on data within its own class",
-                "acceptable": "Most data accesses are local but some foreign accesses remain",
-                "poor": "Method still primarily accesses data from other classes",
-            },
-            {
-                "name": "Delegation Appropriateness",
-                "excellent": "If delegation is used instead of moving, the delegation pattern is clean and justified",
-                "acceptable": "Delegation works but introduces minor indirection overhead",
-                "poor": "Delegation is awkward or hides the original coupling without fixing it",
-            },
-        ],
-    },
-    "god_classes": {
-        "description": "A class that centralizes too much functionality, violating single responsibility and becoming hard to maintain.",
-        "focus": "Whether distinct responsibilities are correctly identified and extracted into separate, cohesive classes.",
-        "criteria": [
-            {
-                "name": "Responsibility Identification",
-                "excellent": "All distinct responsibilities correctly identified and separated",
-                "acceptable": "Main responsibilities identified but boundaries imprecise",
-                "poor": "Responsibilities not clearly separated",
-            },
-            {
-                "name": "Extracted Class Cohesion",
-                "excellent": "Each new class has a single clear responsibility",
-                "acceptable": "New classes are somewhat cohesive",
-                "poor": "New classes are still too broad or too narrow",
-            },
-            {
-                "name": "State Management",
-                "excellent": "Shared state properly encapsulated; no mutable state leaks",
-                "acceptable": "Minor state management issues",
-                "poor": "State scattered or leaked between classes",
-            },
-        ],
-    },
-    "data_clumps": {
-        "description": "Groups of variables that are frequently passed together, suggesting poor encapsulation or a missing class abstraction.",
-        "focus": "Whether all instances of the data clump are identified across files and replaced with a well-designed abstraction.",
-        "criteria": [
-            {
-                "name": "Clump Completeness",
-                "excellent": "All instances of the data clump identified and refactored",
-                "acceptable": "Most instances refactored; a few call sites missed",
-                "poor": "Only partial instances refactored",
-            },
-            {
-                "name": "Abstraction Design",
-                "excellent": "Well-named class/dataclass with appropriate fields and optional methods",
-                "acceptable": "Reasonable grouping but naming or field design could be better",
-                "poor": "Overly generic or poorly named grouping",
-            },
-            {
-                "name": "Field Boundary Accuracy",
-                "excellent": "Exactly the right parameters grouped — no missing or extra fields",
-                "acceptable": "Core fields correct but includes one unnecessary or misses one relevant field",
-                "poor": "Grouping is wrong — key parameters excluded or unrelated ones included",
-            },
-        ],
-    },
-    "shotgun_surgery": {
-        "description": "A change that requires making small modifications in many different classes or files, indicating scattered responsibilities.",
-        "focus": "Whether scattered logic is properly consolidated into a single location so that a conceptual change requires modifying only one place.",
-        "criteria": [
-            {
-                "name": "Fragment Discovery",
-                "excellent": "All scattered fragments identified including indirect ones",
-                "acceptable": "Most direct fragments found; some indirect ones missed",
-                "poor": "Significant fragments missed",
-            },
-            {
-                "name": "Consolidation Strategy",
-                "excellent": "Logic centralized in a single, well-chosen location",
-                "acceptable": "Logic partially centralized; some scatter remains",
-                "poor": "No meaningful consolidation",
-            },
-            {
-                "name": "Abstraction Appropriateness",
-                "excellent": "Unified logic uses an appropriate encapsulation (function/class/config) without over-engineering",
-                "acceptable": "Encapsulation works but is slightly over- or under-engineered",
-                "poor": "No proper abstraction or introduces unnecessary complexity",
-            },
-        ],
-    },
-    "dead_code_elimination": {
-        "description": "Code that is never executed or used, increasing complexity and maintenance burden.",
-        "focus": "Whether dead code is accurately identified and completely removed without leaving orphaned references.",
-        "criteria": [
-            {
-                "name": "Dead Code Coverage",
-                "excellent": "All dead code identified and removed",
-                "acceptable": "Most dead code removed; some unreachable paths remain",
-                "poor": "Significant dead code left in place",
-            },
-            {
-                "name": "Import/Reference Cleanup",
-                "excellent": "All orphaned imports and references cleaned up",
-                "acceptable": "Most imports cleaned; some dangling references",
-                "poor": "Leaves broken or unnecessary imports",
-            },
-            {
-                "name": "Red Herring Avoidance",
-                "excellent": "Correctly preserves code that looks dead but is actually reachable",
-                "acceptable": "Mostly correct but uncertain about one borderline case",
-                "poor": "Removes live code that appears dead, or keeps obvious dead code out of caution",
-            },
-        ],
-    },
-    "interface_segregation": {
-        "description": "Interfaces that are too large, forcing implementations to depend on methods they don't use.",
-        "focus": "Whether the fat interface is correctly split into focused, cohesive interfaces and unnecessary stubs are removed.",
-        "criteria": [
-            {
-                "name": "Interface Decomposition",
-                "excellent": "Interfaces split along cohesive responsibility boundaries",
-                "acceptable": "Interfaces split but boundaries not ideal",
-                "poor": "Interfaces not meaningfully separated",
-            },
-            {
-                "name": "Stub Elimination",
-                "excellent": "All unnecessary stub/pass implementations removed",
-                "acceptable": "Most stubs removed; some remain",
-                "poor": "Stubs still present in implementors",
-            },
-            {
-                "name": "Interface Granularity",
-                "excellent": "Split granularity is appropriate — each interface is focused but not overly narrow",
-                "acceptable": "Slightly too coarse or too fine-grained",
-                "poor": "Interfaces still too fat, or shattered into trivial single-method fragments",
-            },
-        ],
-    },
-    "deeply_inlined_method": {
-        "description": "A method whose sub-method implementations are copied into itself, creating extreme complexity.",
-        "focus": "Whether inlined code fragments are correctly identified and extracted back into well-scoped methods at the right abstraction level.",
-        "criteria": [
-            {
-                "name": "Fragment Identification",
-                "excellent": "All inlined fragments correctly identified despite variable renames and restructuring",
-                "acceptable": "Major fragments identified; some minor ones missed",
-                "poor": "Fragments not correctly identified",
-            },
-            {
-                "name": "Extraction Granularity",
-                "excellent": "Each extracted method has a clear, single purpose at the right abstraction level",
-                "acceptable": "Extraction is reasonable but some methods too large or too small",
-                "poor": "Over-extraction (too many tiny methods) or under-extraction",
-            },
-            {
-                "name": "Depth Handling",
-                "excellent": "All inlining levels correctly unwound (depth 1, 2, 3+)",
-                "acceptable": "Top-level inlining resolved; deeper levels partially addressed",
-                "poor": "Only surface-level extraction; deep inlining remains",
-            },
-        ],
-    },
-}
 
 
 
@@ -268,10 +94,6 @@ Return your evaluation as JSON:
   "cross_file_coordination": {"score": <0-10>, "justification": "<brief>"},
   "structural_soundness": {"score": <0-10>, "justification": "<brief>"},
   "code_quality": {"score": <0-10>, "justification": "<brief>"},
-  "smell_specific": {
-    "<criterion_name>": {"score": <0-10>, "justification": "<brief>"},
-    ...
-  },
   "summary": "<2-3 sentence overall assessment>"
 }
 ```"""
@@ -343,10 +165,10 @@ def call_cli_judge(
     return {"parsed": parsed, "raw": raw_text, "usage": usage}
 
 
-def compute_weighted_score(result: Dict[str, Any], custom_rubric_keys: Optional[list] = None) -> float:
+def compute_weighted_score(result: Dict[str, Any]) -> float:
     """Compute an equally-weighted score normalized to 0-55.
 
-    All rubric dimensions (general, smell-specific, custom) are treated equally.
+    All rubric dimensions (general) are treated equally.
     Final score = (average of all 0-10 scores) / 10 * 55.
     """
     all_scores: list[float] = []
@@ -357,18 +179,7 @@ def compute_weighted_score(result: Dict[str, Any], custom_rubric_keys: Optional[
         if isinstance(dim, dict) and "score" in dim:
             all_scores.append(dim["score"])
 
-    # Smell-specific dimensions
-    smell_specific = result.get("smell_specific", {})
-    for v in smell_specific.values():
-        if isinstance(v, dict) and "score" in v:
-            all_scores.append(v["score"])
-
-    # Custom rubrics from Step 1 analysis (top-level keys)
-    for key in (custom_rubric_keys or []):
-        dim = result.get(key, {})
-        if isinstance(dim, dict) and "score" in dim:
-            all_scores.append(dim["score"])
-
+    
     if not all_scores:
         return 0.0
 
@@ -382,22 +193,6 @@ def compute_weighted_score(result: Dict[str, Any], custom_rubric_keys: Optional[
 # Public API
 # ---------------------------------------------------------------------------
 
-def _format_criteria(criteria: list) -> str:
-    """Format smell-specific criteria into readable text."""
-    lines = []
-    for i, c in enumerate(criteria, 1):
-        lines.append(f"{i}. **{c['name']}** (score 0-10)")
-        lines.append(f"   - 9-10 (Excellent): {c['excellent']}")
-        lines.append(f"   - 7-8 (Good): Mostly meets excellent standard with minor gaps")
-        lines.append(f"   - 5-6 (Acceptable): {c['acceptable']}")
-        lines.append(f"   - 3-4 (Below Average): Attempt made but falls short of acceptable")
-        lines.append(f"   - 0-2 (Poor): {c['poor']}")
-    return "\n".join(lines)
-
-
-def get_rubric(smell_type: str) -> Optional[Dict[str, Any]]:
-    """Look up the rubric for a given smell type. Returns None if not found."""
-    return RUBRICS.get(smell_type.lower().strip().replace(" ", "_"))
 
 
 def extract_affected_files_from_diff(diff_text: str) -> list[str]:
@@ -456,7 +251,6 @@ def build_judge_prompt(
     smell_type: str,
     refactored_code: str,
     smell_analysis: Optional[str] = None,
-    custom_rubrics: Optional[list] = None,
     difficulty: Optional[str] = None,
     label: str = "Candidate",
 ) -> str:
@@ -466,31 +260,12 @@ def build_judge_prompt(
         smell_type: The code smell type (e.g. "feature_envy").
         refactored_code: The refactored code (diff) to evaluate.
         smell_analysis: Pre-generated analysis of the smell (from Step 1).
-        custom_rubrics: List of custom rubric dicts from Step 1 analysis.
         difficulty: Optional difficulty level ("hard", "expert").
         label: Label for the refactored code (e.g. "Ground Truth", "Agent").
 
     Returns:
         A formatted prompt string ready to send to an LLM judge.
-
-    Raises:
-        ValueError: If the smell type is not recognized.
     """
-    rubric = get_rubric(smell_type)
-    if rubric is None:
-        available = sorted(RUBRICS.keys())
-        raise ValueError(
-            f"Unknown smell type {smell_type!r}. "
-            f"Available types: {', '.join(available)}"
-        )
-
-    # Build smell-specific section
-    smell_section = (
-        f"### Smell-Specific Criteria for \"{smell_type}\"\n\n"
-        f"**Focus:** {rubric['focus']}\n\n"
-        f"{_format_criteria(rubric['criteria'])}"
-    )
-
     # Build difficulty guidance
     diff_section = ""
     if difficulty:
@@ -508,29 +283,6 @@ The following analysis describes the smell that was introduced, its root cause, 
 {smell_analysis}
 """
 
-    # Build custom rubrics section from Step 1
-    custom_rubrics_section = ""
-    custom_output_keys = ""
-    if custom_rubrics:
-        lines = ["\n### Instance-Specific Criteria (from smell analysis)\n"]
-        for i, cr in enumerate(custom_rubrics, 1):
-            name = cr.get("name", f"Custom Criterion {i}")
-            lines.append(f"{i}. **{name}** (score 0-10)")
-            lines.append(f"   Description: {cr.get('description', '')}")
-            lines.append(f"   - 9-10 (Excellent): {cr.get('excellent', '')}")
-            lines.append(f"   - 7-8 (Good): {cr.get('good', 'Mostly meets excellent standard with minor gaps')}")
-            lines.append(f"   - 5-6 (Acceptable): {cr.get('acceptable', '')}")
-            lines.append(f"   - 3-4 (Below Average): {cr.get('below_average', 'Attempt made but falls short of acceptable')}")
-            lines.append(f"   - 0-2 (Poor): {cr.get('poor', '')}")
-        custom_rubrics_section = "\n".join(lines)
-
-        # Build extra keys for output format
-        key_lines = []
-        for cr in custom_rubrics:
-            key = cr.get("name", "custom").lower().replace(" ", "_")
-            key_lines.append(f'    "{key}": {{"score": <0-10>, "justification": "<brief>"}}')
-        custom_output_keys = ",\n" + ",\n".join(key_lines)
-
     # Build dynamic output format
     output_format = f"""## Output Format
 
@@ -541,10 +293,6 @@ Return your evaluation as JSON:
   "cross_file_coordination": {{"score": <0-10>, "justification": "<brief>"}},
   "structural_soundness": {{"score": <0-10>, "justification": "<brief>"}},
   "code_quality": {{"score": <0-10>, "justification": "<brief>"}},
-  "smell_specific": {{
-    "<criterion_name>": {{"score": <0-10>, "justification": "<brief>"}},
-    ...
-  }}{custom_output_keys},
   "summary": "<2-3 sentence overall assessment>"
 }}
 ```"""
@@ -553,7 +301,6 @@ Return your evaluation as JSON:
 
 ## Context
 - **Smell Type**: {smell_type}
-- **Smell Description**: {rubric['description']}
 {analysis_section}
 **IMPORTANT**: The refactoring below is provided in **unified diff format** (git diff output). Lines starting with `-` are removed, lines starting with `+` are added, and context lines are unchanged. Evaluate the *intent and quality of the changes*, not the completeness of the code shown — diffs only show changed regions, not the full files.
 
@@ -566,7 +313,7 @@ Return your evaluation as JSON:
 
 {GENERAL_DIMENSIONS}
 
-{smell_section}{custom_rubrics_section}{diff_section}
+{diff_section}
 
 {output_format}"""
 
@@ -601,7 +348,7 @@ def evaluate_instance(
         repo_dir: Root project repo directory for CLI backend.
 
     Returns:
-        Dict with weighted_score, general/smell_specific/custom scores, summary, usage.
+        Dict with weighted_score, general, summary, usage.
 
     Raises:
         ValueError: If instance is missing required fields.
@@ -612,7 +359,6 @@ def evaluate_instance(
     smell_type = instance.get("type", "")
     difficulty = instance.get("difficulty")
     smell_analysis = instance.get("smell_analysis")
-    custom_rubrics = instance.get("custom_rubrics", [])
     repo_name = instance.get("project_name", "")
     instance_id = instance.get("instance_id", "")
 
@@ -622,8 +368,6 @@ def evaluate_instance(
         missing.append("type")
     if not smell_analysis:
         missing.append("smell_analysis")
-    if not custom_rubrics:
-        missing.append("custom_rubrics")
     if missing:
         raise ValueError(
             f"Instance {instance_id!r} is missing required fields: {', '.join(missing)}"
@@ -649,7 +393,6 @@ def evaluate_instance(
         smell_type=smell_type,
         refactored_code=agent_diff,
         smell_analysis=smell_analysis,
-        custom_rubrics=custom_rubrics,
         difficulty=difficulty,
     )
     if backend == "llm":
@@ -664,29 +407,18 @@ def evaluate_instance(
         print(llm_result["raw"], file=sys.stderr)
         raise RuntimeError(f"Failed to parse judge response for instance {instance_id!r}")
 
-    custom_keys = [
-        cr.get("name", "").lower().replace(" ", "_")
-        for cr in custom_rubrics
-    ]
-    parsed["weighted_score"] = compute_weighted_score(parsed, custom_rubric_keys=custom_keys)
+    parsed["weighted_score"] = compute_weighted_score(parsed)
 
     # Organize scores by category
     general_scores = {}
     for k in GENERAL_KEYS:
         if k in parsed:
             general_scores[k] = parsed[k]
-    smell_specific_scores = parsed.get("smell_specific", {})
-    custom_rubric_scores = {}
-    for k in custom_keys:
-        if k in parsed:
-            custom_rubric_scores[k] = parsed[k]
 
     result = {
         "instance_id": instance_id,
         "weighted_score": parsed["weighted_score"],
         "general": general_scores,
-        "smell_specific": smell_specific_scores,
-        "custom_rubrics": custom_rubric_scores,
         "summary": parsed.get("summary", ""),
         "usage": llm_result["usage"],
         "_meta": {

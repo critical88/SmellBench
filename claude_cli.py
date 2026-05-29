@@ -467,11 +467,18 @@ def _call_openai(
         kwargs["base_url"] = effective_base_url
     client = openai.OpenAI(**kwargs)
     start_ms = time.time() * 1000
-    response = client.chat.completions.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+
+    # GPT 模型使用 max_completion_tokens 而不是 max_tokens
+    completion_kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if "gpt" in model.lower():
+        completion_kwargs["max_completion_tokens"] = max_tokens
+    else:
+        completion_kwargs["max_tokens"] = max_tokens
+
+    response = client.chat.completions.create(**completion_kwargs)
     duration_ms = int(time.time() * 1000 - start_ms)
     raw_text = response.choices[0].message.content or ""
     usage_data = response.usage
