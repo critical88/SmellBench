@@ -23,6 +23,7 @@ import threading
 from pathlib import Path
 
 import docker
+import docker.errors
 
 # ---------------------------------------------------------------------------
 # Config
@@ -109,12 +110,42 @@ def ensure_base_image(language: str = "python") -> str:
 
 
 def ensure_project_image(project_name: str) -> str:
-    """Build the per-project Docker image if needed. Returns the image tag."""
+    """Ensure the per-project Docker image exists. Returns the image tag.
+
+    Priority:
+    1. Try to pull from Docker Hub: critical88/smellbench_{project_name}:latest
+    2. Check for local image: smellbench_{project_name}:latest
+    3. Build from scratch if neither exists
+    """
     project_tag = f"smellbench_{project_name}:latest"
+    remote_tag = f"critical88/smellbench_{project_name}:latest"
+
+    # Step 1: Try to pull from Docker Hub
+    try:
+        with print_lock:
+            print(f"Attempting to pull '{remote_tag}' from Docker Hub...")
+        image = client.images.pull(remote_tag)
+        # Tag it locally for convenience
+        image.tag(project_tag.split(':')[0], tag=project_tag.split(':')[1])
+        with print_lock:
+            print(f"Successfully pulled and tagged: {remote_tag} -> {project_tag}")
+        return project_tag
+    except docker.errors.NotFound:
+        with print_lock:
+            print(f"Image '{remote_tag}' not found on Docker Hub.")
+    except docker.errors.APIError as e:
+        with print_lock:
+            print(f"Failed to pull '{remote_tag}': {e}")
+
+    # Step 2: Check for local image
     if any(project_tag in tag for img in client.images.list() for tag in img.tags):
         with print_lock:
-            print(f"Image '{project_tag}' already exists.")
+            print(f"Using existing local image: '{project_tag}'")
         return project_tag
+
+    # Step 3: Build from scratch
+    with print_lock:
+        print(f"No remote or local image found. Building '{project_tag}' from scratch...")
 
     repo_info = repo_dict[project_name]
     repo_url = repo_info["url"]
