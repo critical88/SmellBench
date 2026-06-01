@@ -201,10 +201,10 @@ We support evaluation on [Harbor](https://github.com/harbor-framework/harbor), a
 
 After successfully generating `output/smell_codes.json`, follow these steps to create a Harbor-compatible dataset:
 
-### Step 1: Navigate to harbor-adapter
+### Step 1: Navigate to harbor_adapter
 
 ```bash
-cd harbor-adapter
+cd harbor_adapter
 ```
 
 ### Step 2: Generate Harbor Dataset
