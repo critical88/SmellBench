@@ -91,6 +91,7 @@ Below is a complete example of a single data instance.
 | **Total Evaluation Cases** | 294 |
 | **Code Smell Types** | 7 |
 | **Source Projects** | 7 |
+| **Difficulty Levels**| 3 |
 | **Instruction Types** | 2 (targeted, guided) |
 
 > **Note:** Each instance includes two different instruction types (`hint_targeted` and `hint_guided`), resulting in 147 × 2 = 294 unique evaluation cases.
@@ -106,16 +107,6 @@ Below is a complete example of a single data instance.
 | god_classes | 21 |
 | interface_segregation | 21 |
 | shotgun_surgery | 21 |
-
-#### By Difficulty
-
-| Difficulty | Count |
-|------------|-------|
-| Easy | 49 |
-| Medium | 49 |
-| Hard | 49 |
-
----
 
 ## Project Structure
 
