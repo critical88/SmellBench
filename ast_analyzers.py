@@ -74,8 +74,8 @@ class PythonASTAnalyzer(ASTAnalyzer):
             bool: True if successful, False otherwise
         """
         try:
-            # Import the generate_function_mapping from ast_analyze.py
-            from ast_analyze import generate_function_mapping
+            # Import the generate_function_mapping from ast_analyze_python.py
+            from ast_analyze_python import generate_function_mapping
 
             print(f"[PythonASTAnalyzer] Generating mapping for {self.project_name}...")
             print(f"[PythonASTAnalyzer] Project path: {self.project_path}")

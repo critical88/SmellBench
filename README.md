@@ -1,7 +1,6 @@
+# SmellBench: Towards Fine-Grained Evaluation of Code Agents on Refactoring Tasks
 
-# SmellBench: Can Code Agents Smell and Refactor Bad Code?
-
-This repository provides the **official PyTorch implementation** of **SmellBench**, a benchmark designed to evaluate whether code agents can detect and refactor bad code (code smells).
+This repository provides the benchmark for **SmellBench**, designed to evaluate whether code agents can detect and refactor bad code (code smells).
 
 ## Dataset Format
 
@@ -10,10 +9,11 @@ Each instance in **SmellBench** represents a validated code smell injection case
 Each sample contains:
 
 * Repository metadata
+* Code smell type and difficulty
 * Injected code smell information
-* Related test cases
-* Code before refactoring (with smell)
-* Ground-truth refactored code (structured as a call tree)
+* Target function and test cases
+* Ground-truth refactored code (as a reversal diff)
+* Detailed smell analysis
 
 Below is a complete example of a single data instance.
 
@@ -23,59 +23,38 @@ Below is a complete example of a single data instance.
 
 ```json
 {
-  "instance_id": "8a580458bac9d4bd6fc0ee8094786c36",
-  "type": "Long",
-  "smell_content": "diff --git a/src/xxx.py b/src/xxx.py ...",
-
-  "project_name": "click",
-  "commit_hash": "1d038f270701498433cb432f54db89f95f07a845",
-
-  "meta": {
-    "key": "depth_1",
-    "depth": 1,
-    "calling_times": 3
-  },
-
-  "testsuites": [
-    "test_utils.py::test_make_default"
+  "instance_id": "click-feature_envy-abbada6d83f399a175bfbf64b8a402e5",
+  "type": "feature_envy",
+  "difficulty": "hard",
+  "target_file": "src/click/core.py",
+  "hint_targeted": "The `finalize_context` method in the `_ParseResultAdapter` class (src/click/parser.py) exhibits feature envy - please address this code smell.",
+  "hint_guided": "Can you resolve the feature envy code smell present in src/click/parser.py?",
+  "smell_function": [
+    "src/click/parser.py",
+    "_ParseResultAdapter",
+    "finalize_context"
   ],
-
-  "before_refactor_code": {
-    "type": "caller",
-    "start": 1096,
-    "end": 1151,
-    "code": "def get_short_help_str(...): ...",
-    "module_path": "click.core",
-    "class_name": "Command",
-    "method_name": "get_short_help_str"
+  "test_functions": [
+    ["src/click/parser.py", "_ParseResultAdapter", "finalize_context"]
+  ],
+  "testsuites": [
+    "tests/test_shell_completion.py::test_full_complete[...]"
+  ],
+  "smell_content": "diff --git a/src/click/_utils.py b/src/click/_utils.py\n...",
+  "gt_content": "diff --git a/src/click/_utils.py b/src/click/_utils.py\n...",
+  "hash": "abbada6d83f399a175bfbf64b8a402e5",
+  "commit_hash": "1d038f270701498433cb432f54db89f95f07a845",
+  "project_name": "click",
+  "settings": {
+    "src_path": "src/click",
+    "commit_id": "1d038f270701498433cb432f54db89f95f07a845",
+    "test_cmd": "",
+    "envs": {
+      "PYTHONPATH": "src"
+    },
+    "env_name": "click-dev"
   },
-
-  "after_refactor_code": [
-    {
-      "type": "caller",
-      "code": "def get_short(...): ...",
-      "position": {
-        "module_path": "click.core",
-        "class_name": "Command"
-      },
-
-      "callees": [
-        {
-          "type": "callee",
-          "start": 1103,
-          "end": 1104,
-          "code": "def make_default(...): ...",
-
-          "position": {
-            "module_path": "click.core",
-            "class_name": "Command"
-          },
-
-          "callees": []
-        }
-      ]
-    }
-  ]
+  "smell_analysis": "## Individual Change Analysis\n..."
 }
 ```
 
@@ -85,277 +64,187 @@ Below is a complete example of a single data instance.
 
 #### Top-level Fields
 
-* **`instance_id`**
-  Unique identifier for the sample.
+| Field | Type | Description |
+|-------|------|-------------|
+| `instance_id` | string | Unique identifier (format: `{project}-{type}-{hash}`) |
+| `type` | string | Code smell category (see supported types below) |
+| `difficulty` | string | Difficulty level: `easy`, `medium`, or `hard` |
+| `hint_targeted` | string | Targeted hint identifying the specific smell location |
+| `hint_guided` | string | Guided hint for refactoring without specific location |
+| `smell_function` | list | Location of smelly code: `[file_path, class_name, method_name]` |
+| `test_functions` | list | Related test functions as `[file, class, method]` tuples |
+| `testsuites` | list | Test suite identifiers for validation |
+| `smell_content` | string | Git diff showing the code smell introduction |
+| `gt_content` | string | Git diff showing the ground truth refactoring |
+| `hash` | string | Unique hash identifier |
+| `commit_hash` | string | Git commit hash of the original code |
+| `project_name` | string | Source project name |
+| `settings` | dict | Project settings (src_path, env_vars, etc.) |
+| `smell_analysis` | string | Detailed analysis of the code smell |
+---
 
-* **`type`**
-  Code smell category. Currently supported:
+### Dataset Statistics
 
-  * `"Long"` (Long Method)
-  * `"Duplicated"` (Duplicated Code)
+| Metric | Count |
+|--------|-------|
+| **Total Instances** | 147 |
+| **Total Evaluation Cases** | 294 |
+| **Code Smell Types** | 7 |
+| **Source Projects** | 7 |
+| **Instruction Types** | 2 (targeted, guided) |
 
-* **`smell_content`**
-  The injected patch (Git diff format) introducing the code smell.
+> **Note:** Each instance includes two different instruction types (`hint_targeted` and `hint_guided`), resulting in 147 × 2 = 294 unique evaluation cases.
 
-* **`project_name`**
-  Name of the source repository.
+#### By Code Smell Type
 
-* **`commit_hash`**
-  Specific commit used to ensure reproducibility.
+| Type | Count |
+|------|-------|
+| feature_envy | 21 |
+| data_clumps | 21 |
+| dead_code_elimination | 21 |
+| deeply_inlined_method | 21 |
+| god_classes | 21 |
+| interface_segregation | 21 |
+| shotgun_surgery | 21 |
+
+#### By Difficulty
+
+| Difficulty | Count |
+|------------|-------|
+| Easy | 49 |
+| Medium | 49 |
+| Hard | 49 |
 
 ---
 
-#### `meta` Field
+## Project Structure
 
-Metadata related to cascade injection:
-
-* **`key`**
-  Injection category: `depth_1`, `depth_2`, `depth_3`, or `duplicated`.
-
-* **`depth`**
-  Depth of the call chain in cascade injection.
-
-* **`calling_times`**
-  Number of callees invoked by the caller.
-
----
-
-#### `testsuites`
-
-A list of related unit tests.
-
-All injected samples are validated to pass these tests to ensure behavioral equivalence after refactoring.
+| File / Directory | Description |
+|------------------|-------------|
+| `prepare_smell_cases.py` | Main entry point for one-click benchmark generation pipeline. |
+| `smell_benchmark.py` | Core script for smell injection and test validation on individual repositories. |
+| `smell_type.json` | Configuration of supported code smell types and injection strategies. |
+| `repo_list.json` | Repository metadata: URLs, commit IDs, paths, and setup commands. |
+| `testunits.py` | Test utilities for validating injected code smells. |
+| `Dockerfile` | Docker configuration for reproducible environment. |
+| `ast_analyzers.py` | AST-based code analysis module. |
+| `harbor_adapter/` | Adapter for converting to Harbor-compatible benchmark format. |
 
 ---
 
-### Code Representation
+# Benchmark Pipeline
 
-#### `before_refactor_code`
+## Option 1: One-Click Reproducibility (Docker Environment)
 
-Represents the **smell-injected function** (the target to be refactored).
+If you have a Docker environment available, you can use the one-click reproducibility approach:
 
-It is a single flat function definition containing:
-
-* Source code
-* Line range in the original file
-* Module path
-* Class name
-* Method name
-
----
-
-#### `after_refactor_code` (Ground Truth)
-
-Represents the **ideal refactored structure**.
-
-Unlike the flat representation before refactoring, this is modeled as a **call tree**.
-
-### Tree Structure
-
-```
-caller
- └── callee
-      └── subcallee
-           └── ...
-```
-
-Each node (caller or callee) contains:
-
-* `type` (caller / callee)
-* `code` (source code)
-* `position` (module path + class name)
-* `callees` (nested child functions)
-
-This recursive structure enables representing:
-
-* Single-level extraction (`depth_1`)
-* Multi-level cascade extraction (`depth_2`, `depth_3`)
-* Duplicated code extraction
-
----
-
-### Before vs After Refactoring
-
-| Before Refactoring      | After Refactoring                     |
-| ----------------------- | ------------------------------------- |
-| Long function or Duplicated Code    | Decomposed into multiple functions    |
-| Flat representation     | Hierarchical call-tree representation |
-| Contains injected smell | Clean, structured implementation      |
-
----
-
-
-
-
-#  Benchmark Pipeline
-
-## One-Click Reproducibility
-To ensure full reproducibility and minimize environment-related inconsistencies, we provide a one-click script:
 ```bash
-python -u prepare_project.py
+python -u prepare_smell_cases.py --agent anthropic/claude-sonnet-4.5
 ```
 
 This script automatically executes the entire pipeline for all predefined repositories, including:
 
 - Repository cloning
-
 - Environment setup
-
-- AST-based analysis
-
+- Candidate Discovery
 - Smell injection
+- Quality Verification
+- Benchmark construction
+---
 
-- Data validation
+## Quick Test
 
-- Benchmark sampling
+To quickly test the overall pipeline without running the full benchmark:
 
-All steps are executed inside a Docker container, which guarantees:
+```bash
+python -u prepare_smell_cases.py --project-name click --agent mock
+```
 
-✅ Reproducibility across different machines
+---
 
-✅ Isolation from local dependency conflicts
+## Option 2: Local Execution (Without Docker)
 
-✅ Ease of use (no manual environment configuration required)
+If you don't have Docker available, follow these steps to run the benchmark locally:
 
-✅ Portability and deployment consistency
+### Step 1: Install Code Agent CLI
 
-Users only need Docker installed to reproduce the complete benchmark construction process.
+Install the code agent CLI of your choice (e.g., Claude Code, Qwen Code):
 
-Below we provide a detailed explanation of each stage in the pipeline.
+```bash
+# Example: Install Claude Code
+npm install -g @anthropic-ai/claude-code
+```
 
-## Environment Setup    
-
-We recommend using **Python 3.12**.
-
-Install the required dependencies with:
+### Step 2: Install Python Dependencies
 
 ```bash
 pip install -r repo_requirements.txt
 ```
 
-## Repository Selection
+### Step 3: Run Smell Benchmark
 
-We provide metadata for selected repositories in `repo_list.json`.
-
-If you would like to add additional repositories, please extend the configuration in this file. Below is an example:
-
-```json
-{
-  "matplotlib":{ 
-        "url": "https://github.com/matplotlib/matplotlib",  
-        "commit_id": "1392cbe3c79cdb93f9282747841d648770f60249",
-        "src_path": "lib/matplotlib",
-        "conda_env_create": "conda env create --file environment.yml",
-        "build_cmd": [
-                        "python -m pip install --verbose --no-build-isolation --editable \".[dev]\""
-                    ],
-        "env_name": "mpl-dev"
-    }
-}
-```
-
-### Field Description
-
-* `url`: Repository GitHub URL
-* `commit_id`: Specific commit version used for reproducibility
-* `src_path`: Source code directory for analysis
-* `conda_env_create`: Command to create the repository environment
-* `build_cmd`: Installation commands for the repository
-* `env_name`: Conda environment name
-
----
-
-## AST-based Analysis
-
-Before generating data, we perform dependency and AST analysis on the repository.
-
-Run:
+Execute the benchmark for each repository:
 
 ```bash
-python -u ast_analyze.py --project-name matplotlib
+# Run for a single repository
+python -u smell_benchmark.py --project-name click --agent claude_code/mock
 ```
 
-This command will automatically:
+### Step 4: Collect All Smell Codes
 
-* Clone the repository
-* Create and install the required environment
-* Build and install the project
-
-After analysis is completed, the parsed results will be saved to:
-
-```
-output/{project-name}/function_testunit_mapping.json
-```
-
-⚠️ This step must be executed **once per repository**.
-Future updates will migrate this process into a Docker-based environment.
-
----
-
-## Smell Injection
-
-In this stage, we inject predefined code smells into the selected repositories.
-
-Run:
+After running the benchmark for all repositories, collect the results into a single file:
 
 ```bash
-python -u smell_injection.py --project-name matplotlib
+python -u collect_smell_codes.py
 ```
 
-This step will:
-
-* Identify injectable code regions
-* Inject predefined smells
-* Generate candidate (original, modified) code pairs
-* Validate each pair using `unittest`
-
-Only data pairs that pass unit tests are retained in the candidate pool.
-
----
-
-## Data Sampling
-
-Since the collected dataset can be large, we apply a sampling strategy to construct the final benchmark.
-
-Run:
-
-```bash
-python -u sample_data.py
-```
-
-The final benchmark file will be generated at:
-
-```
-outputs/benchmark.json
-```
+This will generate `output/smell_codes.json` containing all smell codes from all repositories.
 
 ---
 
 # Evaluation
 
-After obtaining the benchmark, we provide an evaluation pipeline for testing code agents.
+We support evaluation on [Harbor](https://github.com/harbor-framework/harbor), a framework for benchmarking code agents.
 
-Run:
+## Generating Harbor-Style Benchmark
+
+After successfully generating `output/smell_codes.json`, follow these steps to create a Harbor-compatible dataset:
+
+### Step 1: Navigate to harbor-adapter
 
 ```bash
-python -u evaluate.py \
-    --model qwen_code \
-    --llm_model gpt5 \
-    --api_key xxx \
-    --base_url xxx
+cd harbor-adapter
 ```
 
-This will generate the evaluation results for the specified code agent.
+### Step 2: Generate Harbor Dataset
+
+```bash
+python -u run_adapter.py --task-dir <task-dir>
+```
+
+This will convert the smell codes into Harbor-style benchmark format in the `task-dir/` directory.
+
+### Step 3: Run Evaluation with Harbor
+
+Clone the Harbor repository and follow the instructions:
+
+```bash
+git clone https://github.com/harbor-framework/harbor.git
+cd harbor
+# Follow Harbor's README to configure and run the evaluation
+```
+
+For detailed Harbor configuration and usage, please refer to the [Harbor documentation](https://github.com/harbor-framework/harbor).
 
 ---
 
-# Notes
+<!-- # Citation
 
-* Each repository requires independent preprocessing.
-* Make sure all repository environments are correctly created before running injection.
-* API-based models require valid API credentials.
+If you use this benchmark, please cite:
 
----
-
-
-
+```bibtex
+@dataset{smellbench_2026,
+  title={SmellBench: A Benchmark for Code Smell Detection and Refactoring},
+  year={2026}
+}
+``` -->

@@ -997,7 +997,7 @@ def generate_function_mapping(project_name:str, project_path="../project", outpu
         print(f"environment different, redirected to {target_conda_env}")
         # subprocess.run(["pytest", "-q"])
         # subprocess.run(["conda", "run", "-n", target_conda_env, "--live-stream", "pytest"])
-        cmd = ["conda", "run", "-n", target_conda_env, "--live-stream", "python", "ast_analyze.py", "--project-name", project_name]
+        cmd = ["conda", "run", "-n", target_conda_env, "--live-stream", "python", "ast_analyze_python.py", "--project-name", project_name]
         if output_file:
             cmd.extend(["--output-file", str(output_file)])
         result = subprocess.run(cmd, text=True)
