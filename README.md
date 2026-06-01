@@ -110,16 +110,18 @@ Below is a complete example of a single data instance.
 
 ## Project Structure
 
-| File / Directory | Description |
-|------------------|-------------|
-| `prepare_smell_cases.py` | Main entry point for one-click benchmark generation pipeline. |
-| `smell_benchmark.py` | Core script for smell injection and test validation on individual repositories. |
-| `smell_type.json` | Configuration of supported code smell types and injection strategies. |
-| `repo_list.json` | Repository metadata: URLs, commit IDs, paths, and setup commands. |
-| `testunits.py` | Test utilities for validating injected code smells. |
-| `Dockerfile` | Docker configuration for reproducible environment. |
-| `ast_analyzers.py` | AST-based code analysis module. |
-| `harbor_adapter/` | Adapter for converting to Harbor-compatible benchmark format. |
+```
+├── prepare_smell_cases.py    # Main entry point for one-click pipeline
+├── smell_benchmark.py        # Core script for smell injection and test validation
+├── smell_type.json           # Code smell types and injection strategies
+├── repo_list.json            # Repository metadata (URLs, commit IDs, setup commands)
+├── testunits.py              # Test utilities for validating injected smells
+├── Dockerfile                # Docker configuration for reproducible environment
+├── ast_analyzers.py          # AST-based code analysis module
+├── harbor_adapter/           # Adapter for Harbor-compatible benchmark format
+└── output/
+    └── smell_codes.json      # Generated benchmark dataset
+```
 
 ---
 
