@@ -113,6 +113,8 @@ Below is a complete example of a single data instance.
 ```
 ├── prepare_smell_cases.py    # Main entry point for one-click pipeline
 ├── smell_benchmark.py        # Core script for smell injection and test validation
+├── collect_smell_codes.py    # Collect all smell codes into a single JSON file
+├── prepare_harbor_tasks.py   # Download SmellBench from HuggingFace and generate Harbor tasks
 ├── smell_type.json           # Code smell types and injection strategies
 ├── repo_list.json            # Repository metadata (URLs, commit IDs, setup commands)
 ├── testunits.py              # Test utilities for validating injected smells
@@ -199,7 +201,50 @@ This will generate `output/smell_codes.json` containing all smell codes from all
 
 We support evaluation on [Harbor](https://github.com/harbor-framework/harbor), a framework for benchmarking code agents.
 
-## Generating Harbor-Style Benchmark
+## Quick Start: One-Click Harbor Dataset Generation
+
+For users who want to quickly experience and inspect the benchmark, we provide a one-click script that automatically downloads the SmellBench dataset from HuggingFace and generates Harbor-compatible tasks.
+
+**Dataset URL:** [https://huggingface.co/datasets/critical88/SmellBench](https://huggingface.co/datasets/critical88/SmellBench)
+
+### Prerequisites
+
+```bash
+pip install datasets
+```
+
+### Usage
+
+```bash
+# Download dataset only (saves to smell_codes.json)
+python prepare_harbor_tasks.py
+
+# Download and generate Harbor tasks
+python prepare_harbor_tasks.py --task-dir ./output/harbor_tasks
+
+# With additional options
+python prepare_harbor_tasks.py \
+    --task-dir ./output/harbor_tasks \
+    --hint-type targeted \
+    --difficulty medium \
+    --limit 10 \
+    --overwrite
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `--output, -o` | Output path for smell_codes.json (default: `smell_codes.json`) |
+| `--task-dir` | Output directory for Harbor tasks (if omitted, only downloads dataset) |
+| `--hint-type` | Hint type: `targeted`, `guided`, or empty for both (default: both) |
+| `--limit` | Max number of instances to convert |
+| `--difficulty` | Filter by difficulty: `easy`, `medium`, `hard`, `expert` |
+| `--overwrite` | Overwrite existing task directories |
+| `--model-name` | LLM judge model name (default: `anthropic/claude-sonnet-4-5-20250929`) |
+| `--skip-judge` | Skip LLM-as-judge evaluation |
+
+## Generating Harbor-Style Benchmark (Manual)
 
 After successfully generating `output/smell_codes.json`, follow these steps to create a Harbor-compatible dataset:
 
